@@ -11,6 +11,7 @@ import DictionaryBrowser from './pages/DictionaryBrowser';
 import VersionHistory from './pages/VersionHistory';
 import AdminUsers from './pages/AdminUsers';
 import RoleManagement from './pages/RoleManagement';
+import Profile from './pages/Profile';
 
 const App: React.FC = () => {
   return (
@@ -26,6 +27,7 @@ const App: React.FC = () => {
               <Route path="/connections/:id/versions" element={<VersionHistory />} />
               <Route path="/admin/users" element={<AdminUsers />} />
               <Route path="/admin/roles" element={<RoleManagement />} />
+              <Route path="/profile" element={<Profile />} />
             </Route>
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />

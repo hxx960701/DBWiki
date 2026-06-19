@@ -56,9 +56,13 @@ authRouter.post(
 
       const { password_hash: _, ...userWithoutPassword } = user;
 
+      // Non-admin users who haven't changed their password yet must change it on first login
+      const mustChangePassword = user.role !== 'admin' && !user.password_changed;
+
       res.json({
         token,
         user: { ...userWithoutPassword, permissions },
+        mustChangePassword,
       });
     } catch (error) {
       next(error);
@@ -84,6 +88,45 @@ authRouter.get(
       const { password_hash: _, ...userWithoutPassword } = user;
 
       res.json({ ...userWithoutPassword, permissions });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(6, 'New password must be at least 6 characters'),
+});
+
+// PUT /auth/password — change own password
+authRouter.put(
+  '/password',
+  authenticate,
+  validate(changePasswordSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const userId = req.user!.userId;
+
+      const user = await knex('users').where({ id: userId }).first();
+      if (!user) {
+        throw new AppError('User not found', 404);
+      }
+
+      const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isMatch) {
+        throw new AppError('Current password is incorrect', 400);
+      }
+
+      const newPasswordHash = await bcrypt.hash(newPassword, 10);
+      await knex('users').where({ id: userId }).update({
+        password_hash: newPasswordHash,
+        password_changed: true,
+        updated_at: knex.fn.now(),
+      });
+
+      res.json({ message: 'Password changed successfully' });
     } catch (error) {
       next(error);
     }

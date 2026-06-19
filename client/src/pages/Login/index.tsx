@@ -14,9 +14,13 @@ const Login: React.FC = () => {
   const handleLogin = async (values: { username: string; password: string }) => {
     setLoginLoading(true);
     try {
-      await login(values.username, values.password);
+      const { mustChangePassword } = await login(values.username, values.password);
       message.success('登录成功');
-      navigate('/dashboard');
+      if (mustChangePassword) {
+        navigate('/profile', { replace: true });
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err: any) {
       message.error(err.response?.data?.error || '登录失败');
     } finally {

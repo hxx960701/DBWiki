@@ -63,7 +63,6 @@ const MainLayout: React.FC = () => {
           {user?.username} <Tag color={user?.role === 'admin' ? 'red' : 'blue'} style={{ marginLeft: 4 }}>{user?.role}</Tag>
         </span>
       ),
-      disabled: true,
     },
     { type: 'divider' as const },
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
@@ -73,6 +72,8 @@ const MainLayout: React.FC = () => {
     if (key === 'logout') {
       logout();
       navigate('/login');
+    } else if (key === 'profile') {
+      navigate('/profile');
     }
   };
 
@@ -96,6 +97,8 @@ const MainLayout: React.FC = () => {
     } else if (segments[0] === 'admin') {
       if (segments[1] === 'users') items.push({ title: '用户管理' });
       else if (segments[1] === 'roles') items.push({ title: '角色管理' });
+    } else if (segments[0] === 'profile') {
+      items.push({ title: '个人设置' });
     }
     return items;
   })();

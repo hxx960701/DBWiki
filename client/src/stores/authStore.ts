@@ -7,10 +7,12 @@ interface AuthState {
   token: string | null;
   isAuthenticated: boolean;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  mustChangePassword: boolean;
+  login: (username: string, password: string) => Promise<{ mustChangePassword?: boolean }>;
   logout: () => void;
   fetchProfile: () => Promise<void>;
   hasPermission: (code: string) => boolean;
+  clearMustChangePassword: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -18,11 +20,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   token: localStorage.getItem('dbwiki_token'),
   isAuthenticated: !!localStorage.getItem('dbwiki_token'),
   loading: !!localStorage.getItem('dbwiki_token'),
+  mustChangePassword: false,
 
   login: async (username, password) => {
-    const { token, user } = await authApi.login({ username, password });
+    const { token, user, mustChangePassword } = await authApi.login({ username, password });
     localStorage.setItem('dbwiki_token', token);
-    set({ token, user, isAuthenticated: true });
+    set({ token, user, isAuthenticated: true, mustChangePassword: !!mustChangePassword });
+    return { mustChangePassword };
   },
 
   logout: () => {
@@ -47,4 +51,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (u.role === 'admin') return true;
     return Array.isArray(u.permissions) && u.permissions.includes(code);
   },
+
+  clearMustChangePassword: () => set({ mustChangePassword: false }),
 }));

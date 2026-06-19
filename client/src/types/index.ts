@@ -127,4 +127,5 @@ export interface DictionaryIndex {
 export interface AuthResponse {
   token: string;
   user: User;
+  mustChangePassword?: boolean;
 }
