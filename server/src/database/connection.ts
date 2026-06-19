@@ -27,15 +27,26 @@ export const knex = Knex({
 });
 
 export async function initializeDatabase() {
-  // Run migrations
+  // Run migrations. In production (dist/) the migrations directory may contain
+  // both .js and .d.ts files (tsc emits both when declaration:true). Knex would
+  // try to load the .d.ts as a migration and fail with "must have up/down".
+  //
+  // We list .js only when running compiled output. In dev (tsx) the directory
+  // contains .ts files, so include both extensions. The .d.ts case is handled
+  // by never emitting them in tsconfig (declaration: false).
+  const inProduction = __dirname.includes(`${path.sep}dist${path.sep}`);
+  const loadExtensions = inProduction ? ['.js'] : ['.js', '.ts'];
+
   await knex.migrate.latest({
     directory: path.join(__dirname, 'migrations'),
+    loadExtensions,
   });
   console.log('[DB] Migrations complete');
 
   // Run seeds
   await knex.seed.run({
     directory: path.join(__dirname, 'seeds'),
+    loadExtensions,
   });
   console.log('[DB] Seeds complete');
 }
