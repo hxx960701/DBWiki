@@ -1,0 +1,97 @@
+import mysql from 'mysql2/promise';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo } from './types.js';
+
+export class MySQLAdapter implements DatabaseAdapter {
+  protected pool: mysql.Pool;
+  protected dbName: string;
+
+  constructor(config: ConnectionConfig) {
+    this.dbName = config.database;
+    this.pool = mysql.createPool({
+      host: config.host,
+      port: config.port,
+      user: config.username,
+      password: config.password,
+      database: config.database,
+      connectTimeout: 10000,
+    });
+  }
+
+  async testConnection(): Promise<boolean> {
+    try {
+      const conn = await this.pool.getConnection();
+      conn.release();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getTables(): Promise<TableInfo[]> {
+    const [rows] = await this.pool.query(
+      `SELECT TABLE_NAME as tableName, TABLE_COMMENT as tableComment,
+       ENGINE as engine, TABLE_ROWS as rowCount
+       FROM information_schema.TABLES
+       WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
+       ORDER BY TABLE_NAME`,
+      [this.dbName]
+    );
+    return (rows as any[]).map(r => ({
+      tableName: r.tableName,
+      tableComment: r.tableComment || '',
+      engine: r.engine || '',
+      rowCount: r.rowCount || 0,
+    }));
+  }
+
+  async getColumns(tableName: string): Promise<ColumnInfo[]> {
+    const [rows] = await this.pool.query(
+      `SELECT COLUMN_NAME as columnName, COLUMN_TYPE as columnType,
+       IS_NULLABLE as isNullable, COLUMN_KEY as columnKey,
+       COLUMN_DEFAULT as columnDefault, EXTRA as extra,
+       COLUMN_COMMENT as columnComment, ORDINAL_POSITION as ordinalPosition
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+       ORDER BY ORDINAL_POSITION`,
+      [this.dbName, tableName]
+    );
+    return (rows as any[]).map(r => ({
+      columnName: r.columnName,
+      columnType: r.columnType,
+      isNullable: r.isNullable === 'YES',
+      columnKey: r.columnKey || '',
+      columnDefault: r.columnDefault,
+      extra: r.extra || '',
+      columnComment: r.columnComment || '',
+      ordinalPosition: r.ordinalPosition,
+    }));
+  }
+
+  async getIndexes(tableName: string): Promise<IndexInfo[]> {
+    const [rows] = await this.pool.query(`SHOW INDEX FROM \`${tableName}\``);
+    const indexMap = new Map<string, { columns: string[]; isUnique: boolean; indexType: string }>();
+
+    for (const row of rows as any[]) {
+      const name = row.Key_name;
+      if (!indexMap.has(name)) {
+        indexMap.set(name, {
+          columns: [],
+          isUnique: !row.Non_unique,
+          indexType: row.Index_type || 'BTREE',
+        });
+      }
+      indexMap.get(name)!.columns.push(row.Column_name);
+    }
+
+    return Array.from(indexMap.entries()).map(([indexName, info]) => ({
+      indexName,
+      indexType: info.indexType,
+      columns: info.columns,
+      isUnique: info.isUnique,
+    }));
+  }
+
+  async disconnect(): Promise<void> {
+    await this.pool.end();
+  }
+}
