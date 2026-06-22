@@ -1,34 +1,72 @@
 import oracledb from 'oracledb';
 import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo } from './types.js';
 
+/** Default timeout (ms) for pool creation and connection test. */
+const CONNECT_TIMEOUT_MS = 15_000;
+
+/** Race a promise against a timeout, throwing if it takes too long. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
+    ),
+  ]);
+}
+
+/**
+ * Append Oracle Easy Connect timeout parameters to the connect string so the
+ * driver itself gives up quickly on unreachable hosts.
+ */
+function injectConnectTimeout(connectString: string, ms: number): string {
+  const separator = connectString.includes('?') ? '&' : '?';
+  return `${connectString}${separator}transport_connect_timeout=${ms}&retry_count=0`;
+}
+
 export class OracleAdapter implements DatabaseAdapter {
   private pool: oracledb.Pool | null = null;
   private connectConfig: oracledb.PoolAttributes;
   private owner: string;
+  private connectTimeoutMs: number;
 
   constructor(config: ConnectionConfig) {
     this.owner = config.username.toUpperCase();
+    this.connectTimeoutMs = config.extraConfig?.connectTimeout
+      ? Number(config.extraConfig.connectTimeout)
+      : CONNECT_TIMEOUT_MS;
+
+    const rawConnectString = config.extraConfig?.connectString
+      || `${config.host}:${config.port}/${config.database}`;
+
     this.connectConfig = {
       user: config.username,
       password: config.password,
-      connectString: config.extraConfig?.connectString
-        || `${config.host}:${config.port}/${config.database}`,
-      poolMin: 2,
-      poolMax: 10,
-      poolTimeout: 60,
+      connectString: injectConnectTimeout(rawConnectString, this.connectTimeoutMs),
+      poolMin: 1,
+      poolMax: 5,
+      poolTimeout: 10,
+      queueTimeout: 10_000,
     };
   }
 
   private async getPool(): Promise<oracledb.Pool> {
     if (!this.pool) {
-      this.pool = await oracledb.createPool(this.connectConfig);
+      this.pool = await withTimeout(
+        oracledb.createPool(this.connectConfig),
+        this.connectTimeoutMs,
+        'Oracle pool creation',
+      );
     }
     return this.pool;
   }
 
   async testConnection(): Promise<boolean> {
     const pool = await this.getPool();
-    const connection = await pool.getConnection();
+    const connection = await withTimeout(
+      pool.getConnection(),
+      this.connectTimeoutMs,
+      'Oracle connection acquisition',
+    );
     try {
       await connection.execute('SELECT 1 FROM DUAL');
       return true;
@@ -39,7 +77,11 @@ export class OracleAdapter implements DatabaseAdapter {
 
   async getTables(): Promise<TableInfo[]> {
     const pool = await this.getPool();
-    const connection = await pool.getConnection();
+    const connection = await withTimeout(
+      pool.getConnection(),
+      this.connectTimeoutMs,
+      'Oracle connection acquisition',
+    );
     try {
       const result = await connection.execute(
         `SELECT t.TABLE_NAME, tc.COMMENTS
@@ -64,7 +106,11 @@ export class OracleAdapter implements DatabaseAdapter {
 
   async getColumns(tableName: string): Promise<ColumnInfo[]> {
     const pool = await this.getPool();
-    const connection = await pool.getConnection();
+    const connection = await withTimeout(
+      pool.getConnection(),
+      this.connectTimeoutMs,
+      'Oracle connection acquisition',
+    );
     try {
       const result = await connection.execute(
         `SELECT
@@ -139,7 +185,11 @@ export class OracleAdapter implements DatabaseAdapter {
 
   async getIndexes(tableName: string): Promise<IndexInfo[]> {
     const pool = await this.getPool();
-    const connection = await pool.getConnection();
+    const connection = await withTimeout(
+      pool.getConnection(),
+      this.connectTimeoutMs,
+      'Oracle connection acquisition',
+    );
     try {
       const result = await connection.execute(
         `SELECT
