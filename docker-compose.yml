@@ -21,9 +21,8 @@ services:
     restart: unless-stopped
 
     ports:
-      # Bind to localhost only if you put nginx in front.
-      # Use "3000:3000" if nginx runs on another host / in another compose file.
-      - "127.0.0.1:3000:3000"
+      # 生产部署时建议前面加 nginx，然后改回 127.0.0.1:3000:3000
+      - "3000:3000"
 
     volumes:
       # SQLite database — MUST be persisted
