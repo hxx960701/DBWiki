@@ -67,12 +67,12 @@ RUN if [ -n "$http_proxy" ]; then \
 # Chrome enterprise policies often force HTTPS-upgrades on IP-based origins;
 # a self-signed cert allows the browser to complete the TLS handshake (user
 # clicks "Advanced → Proceed" once).
+# NOTE: chown is done in the next step together with data/logs.
 RUN mkdir -p /app/certs && \
     openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
       -keyout /app/certs/server.key \
       -out /app/certs/server.crt \
-      -subj "/CN=DBwiki" && \
-    chown -R dbwiki:dbwiki /app/certs
+      -subj "/CN=DBwiki"
 
 WORKDIR /app
 
