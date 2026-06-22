@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const client = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 120000,  // 2 minutes — sync on large schemas can take a while
 });
 
 // Request interceptor: attach JWT

@@ -93,34 +93,57 @@ async function loadAdapter(connectionId: number) {
 
 async function fetchLiveSnapshot(adapter: ReturnType<typeof createAdapter>): Promise<TableSnapshot[]> {
   const tables = await adapter.getTables();
-  const out: TableSnapshot[] = [];
-  for (const t of tables) {
-    const cols = await adapter.getColumns(t.tableName);
-    const idxs = await adapter.getIndexes(t.tableName);
-    out.push({
-      table_name: t.tableName,
-      table_comment: t.tableComment || '',
-      engine: t.engine || '',
-      row_count: t.rowCount || 0,
-      columns: cols.map((c) => ({
-        column_name: c.columnName,
-        column_type: c.columnType,
-        is_nullable: c.isNullable ? 'YES' : 'NO',
-        column_key: c.columnKey || '',
-        column_default: c.columnDefault ?? null,
-        extra: c.extra || '',
-        column_comment: c.columnComment || '',
-        ordinal_position: c.ordinalPosition,
-      })),
-      indexes: idxs.map((i) => ({
-        index_name: i.indexName,
-        index_type: i.indexType,
-        columns: i.columns,
-        is_unique: !!i.isUnique,
-      })),
-    });
+
+  // Fetch columns + indexes for every table in parallel.
+  // Oracle getColumns() does heavy PK/UK/FK JOINs — running them one-by-one
+  // easily exceeds the 30 s client timeout on large schemas.
+  const CONCURRENCY = 5;  // cap concurrent DB queries to avoid overwhelming the pool
+  const results: (TableSnapshot | null)[] = new Array(tables.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < tables.length) {
+      const i = cursor++;
+      const t = tables[i];
+      try {
+        const [cols, idxs] = await Promise.all([
+          adapter.getColumns(t.tableName),
+          adapter.getIndexes(t.tableName),
+        ]);
+        results[i] = {
+          table_name: t.tableName,
+          table_comment: t.tableComment || '',
+          engine: t.engine || '',
+          row_count: t.rowCount || 0,
+          columns: cols.map((c) => ({
+            column_name: c.columnName,
+            column_type: c.columnType,
+            is_nullable: c.isNullable ? 'YES' : 'NO',
+            column_key: c.columnKey || '',
+            column_default: c.columnDefault ?? null,
+            extra: c.extra || '',
+            column_comment: c.columnComment || '',
+            ordinal_position: c.ordinalPosition,
+          })),
+          indexes: idxs.map((i) => ({
+            index_name: i.indexName,
+            index_type: i.indexType,
+            columns: i.columns,
+            is_unique: !!i.isUnique,
+          })),
+        };
+      } catch (err: any) {
+        // Don't fail the whole sync because of one broken table
+        console.warn(`[sync] Skipping table ${t.tableName}: ${err.message}`);
+        results[i] = null;
+      }
+    }
   }
-  return out;
+
+  // Spin up CONCURRENCY parallel workers
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+
+  return results.filter((r): r is TableSnapshot => r !== null);
 }
 
 async function loadStoredSnapshot(versionId: number): Promise<TableSnapshot[]> {

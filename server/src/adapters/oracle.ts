@@ -43,9 +43,9 @@ export class OracleAdapter implements DatabaseAdapter {
       password: config.password,
       connectString: injectConnectTimeout(rawConnectString, this.connectTimeoutMs),
       poolMin: 1,
-      poolMax: 5,
+      poolMax: 10,    // match sync concurrency (5 workers × 2 queries each)
       poolTimeout: 10,
-      queueTimeout: 10_000,
+      queueTimeout: 30_000,
     };
   }
 
