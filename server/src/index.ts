@@ -18,7 +18,6 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 // Middleware
 app.use(helmet({
   // Relax CSP for SPA — allows inline scripts/styles, fonts, and images from any source.
-  // In production the frontend is served from the same origin, so 'self' covers most needs.
   contentSecurityPolicy: {
     directives: {
       'default-src': ["'self'"],
@@ -30,7 +29,13 @@ app.use(helmet({
       'frame-ancestors': ["'self'"],
     },
   },
-  // Allow the page to be embedded in iframes from same origin (corporate portals)
+  // Disable HSTS — internal deployment over HTTP (no TLS)
+  strictTransportSecurity: false,
+  // Disable COOP/COEP — they require HTTPS or localhost, break on IP-based HTTP access
+  crossOriginOpenerPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  // Allow the page to be embedded in iframes from same origin
   frameguard: { action: 'sameorigin' },
 }));
 app.use(cors({
