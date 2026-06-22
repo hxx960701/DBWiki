@@ -1,0 +1,56 @@
+# =============================================================================
+# DBwiki — Docker Compose (Rocky Linux / any Docker host)
+# =============================================================================
+# Usage:
+#   1. cp .env.production.example .env   →  edit and fill secrets
+#   2. docker compose up -d
+#   3. Place nginx / traefik in front of port 3000 for TLS
+# =============================================================================
+
+services:
+  dbwiki:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dbwiki:latest
+    container_name: dbwiki
+    restart: unless-stopped
+
+    ports:
+      # Bind to localhost only if you put nginx in front.
+      # Use "3000:3000" if nginx runs on another host / in another compose file.
+      - "127.0.0.1:3000:3000"
+
+    volumes:
+      # SQLite database — MUST be persisted
+      - dbwiki_data:/app/data
+      # Optional: mount logs out for external collection
+      - dbwiki_logs:/app/logs
+
+    env_file:
+      - .env
+
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+
+    # Resource limits (adjust to your server)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+    # Let Docker handle log rotation
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  dbwiki_data:
+    driver: local
+  dbwiki_logs:
+    driver: local
