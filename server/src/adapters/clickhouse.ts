@@ -17,18 +17,14 @@ export class ClickHouseAdapter implements DatabaseAdapter {
   }
 
   async testConnection(): Promise<boolean> {
-    try {
-      const result = await this.client.ping();
-      return result.success;
-    } catch {
-      return false;
-    }
+    const result = await this.client.ping();
+    return result.success;
   }
 
   async getTables(): Promise<TableInfo[]> {
     const result = await this.client.query({
       query: `
-        SELECT name, engine, total_rows, comment
+        SELECT name, engine, comment
         FROM system.tables
         WHERE database = {database: String}
         ORDER BY name
@@ -41,7 +37,7 @@ export class ClickHouseAdapter implements DatabaseAdapter {
       tableName: r.name,
       tableComment: r.comment || '',
       engine: r.engine || '',
-      rowCount: parseInt(r.total_rows) || 0,
+      rowCount: 0,
     }));
   }
 

@@ -1,4 +1,4 @@
-import * as mssql from 'mssql';
+import mssql from 'mssql';
 import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo } from './types.js';
 
 export class MSSQLAdapter implements DatabaseAdapter {
@@ -29,13 +29,9 @@ export class MSSQLAdapter implements DatabaseAdapter {
   }
 
   async testConnection(): Promise<boolean> {
-    try {
-      const pool = await this.getPool();
-      await pool.request().query('SELECT 1');
-      return true;
-    } catch {
-      return false;
-    }
+    const pool = await this.getPool();
+    await pool.request().query('SELECT 1');
+    return true;
   }
 
   async getTables(): Promise<TableInfo[]> {
@@ -44,14 +40,11 @@ export class MSSQLAdapter implements DatabaseAdapter {
       .query(`
         SELECT
           t.TABLE_NAME AS tableName,
-          CAST(ep.value AS NVARCHAR(MAX)) AS tableComment,
-          p.rows AS rowCount
+          CAST(ep.value AS NVARCHAR(MAX)) AS tableComment
         FROM INFORMATION_SCHEMA.TABLES t
         LEFT JOIN sys.tables st ON st.name = t.TABLE_NAME
         LEFT JOIN sys.extended_properties ep
           ON ep.major_id = st.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
-        LEFT JOIN sys.partitions p
-          ON p.object_id = st.object_id AND p.index_id IN (0, 1)
         WHERE t.TABLE_TYPE = 'BASE TABLE' AND t.TABLE_CATALOG = DB_NAME()
         ORDER BY t.TABLE_NAME
       `);
@@ -59,7 +52,7 @@ export class MSSQLAdapter implements DatabaseAdapter {
       tableName: r.tableName,
       tableComment: r.tableComment || '',
       engine: 'SQL Server',
-      rowCount: r.rowCount || 0,
+      rowCount: 0,
     }));
   }
 

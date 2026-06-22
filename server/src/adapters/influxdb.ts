@@ -17,12 +17,8 @@ export class InfluxDBAdapter implements DatabaseAdapter {
   }
 
   async testConnection(): Promise<boolean> {
-    try {
-      const rows = await this.collectRows('SHOW MEASUREMENTS');
-      return Array.isArray(rows);
-    } catch {
-      return false;
-    }
+    const rows = await this.collectRows('SHOW MEASUREMENTS');
+    return Array.isArray(rows);
   }
 
   private collectRows(query: string): Promise<any[]> {

@@ -16,5 +16,8 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
     return;
   }
 
-  res.status(500).json({ error: 'Internal server error' });
+  // Return the real error message so the frontend can show it to the user.
+  // Non-AppErrors are typically database driver errors (network, auth, TLS)
+  // that don't expose sensitive internals.
+  res.status(500).json({ error: err.message || 'Internal server error' });
 }

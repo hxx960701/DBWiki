@@ -27,18 +27,13 @@ export class OracleAdapter implements DatabaseAdapter {
   }
 
   async testConnection(): Promise<boolean> {
-    let connection: oracledb.Connection | null = null;
+    const pool = await this.getPool();
+    const connection = await pool.getConnection();
     try {
-      const pool = await this.getPool();
-      connection = await pool.getConnection();
       await connection.execute('SELECT 1 FROM DUAL');
-      await connection.close();
       return true;
-    } catch {
-      if (connection) {
-        try { await connection.close(); } catch { /* ignore */ }
-      }
-      return false;
+    } finally {
+      await connection.close();
     }
   }
 
@@ -47,7 +42,7 @@ export class OracleAdapter implements DatabaseAdapter {
     const connection = await pool.getConnection();
     try {
       const result = await connection.execute(
-        `SELECT t.TABLE_NAME, tc.COMMENTS, t.NUM_ROWS
+        `SELECT t.TABLE_NAME, tc.COMMENTS
          FROM ALL_TABLES t
          LEFT JOIN ALL_TAB_COMMENTS tc
            ON t.OWNER = tc.OWNER AND t.TABLE_NAME = tc.TABLE_NAME AND tc.TABLE_TYPE = 'TABLE'
@@ -60,7 +55,7 @@ export class OracleAdapter implements DatabaseAdapter {
         tableName: r.TABLE_NAME,
         tableComment: r.COMMENTS || '',
         engine: 'Oracle',
-        rowCount: r.NUM_ROWS || 0,
+        rowCount: 0,
       }));
     } finally {
       await connection.close();

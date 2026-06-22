@@ -18,19 +18,15 @@ export class MySQLAdapter implements DatabaseAdapter {
   }
 
   async testConnection(): Promise<boolean> {
-    try {
-      const conn = await this.pool.getConnection();
-      conn.release();
-      return true;
-    } catch {
-      return false;
-    }
+    const conn = await this.pool.getConnection();
+    conn.release();
+    return true;
   }
 
   async getTables(): Promise<TableInfo[]> {
     const [rows] = await this.pool.query(
       `SELECT TABLE_NAME as tableName, TABLE_COMMENT as tableComment,
-       ENGINE as engine, TABLE_ROWS as rowCount
+       ENGINE as engine
        FROM information_schema.TABLES
        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
        ORDER BY TABLE_NAME`,
@@ -40,7 +36,7 @@ export class MySQLAdapter implements DatabaseAdapter {
       tableName: r.tableName,
       tableComment: r.tableComment || '',
       engine: r.engine || '',
-      rowCount: r.rowCount || 0,
+      rowCount: 0,
     }));
   }
 

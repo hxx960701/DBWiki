@@ -12,7 +12,7 @@ export class StarRocksAdapter extends MySQLAdapter {
   async getTables(): Promise<TableInfo[]> {
     const [rows] = await this.pool.query(
       `SELECT TABLE_NAME as tableName, TABLE_COMMENT as tableComment,
-       ENGINE as engine, TABLE_ROWS as rowCount
+       ENGINE as engine
        FROM information_schema.TABLES
        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
        ORDER BY TABLE_NAME`,
@@ -22,7 +22,7 @@ export class StarRocksAdapter extends MySQLAdapter {
       tableName: r.tableName,
       tableComment: r.tableComment || '',
       engine: r.engine || 'StarRocks',
-      rowCount: r.rowCount || 0,
+      rowCount: 0,
     }));
   }
 

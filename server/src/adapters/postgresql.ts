@@ -18,22 +18,16 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
   }
 
   async testConnection(): Promise<boolean> {
-    try {
-      const client = await this.pool.connect();
-      client.release();
-      return true;
-    } catch {
-      return false;
-    }
+    const client = await this.pool.connect();
+    client.release();
+    return true;
   }
 
   async getTables(): Promise<TableInfo[]> {
     const result = await this.pool.query(
       `SELECT t.tablename as table_name,
-       obj_description((quote_ident(t.schemaname) || '.' || quote_ident(t.tablename))::regclass) as table_comment,
-       COALESCE(s.n_live_tup, 0) as row_count
+       obj_description((quote_ident(t.schemaname) || '.' || quote_ident(t.tablename))::regclass) as table_comment
        FROM pg_catalog.pg_tables t
-       LEFT JOIN pg_catalog.pg_stat_user_tables s ON s.schemaname = t.schemaname AND s.relname = t.tablename
        WHERE t.schemaname = $1
        ORDER BY t.tablename`,
       [this.schema]
@@ -42,7 +36,7 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
       tableName: r.table_name,
       tableComment: r.table_comment || '',
       engine: 'PostgreSQL',
-      rowCount: parseInt(r.row_count) || 0,
+      rowCount: 0,
     }));
   }
 
