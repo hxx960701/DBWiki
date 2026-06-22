@@ -1,23 +1,36 @@
 # =============================================================================
 # DBwiki Docker Image
 # =============================================================================
-# Build:
+# Build (no proxy):
 #   docker build -t dbwiki:latest .
 #
-# Run (with docker-compose — recommended):
-#   docker compose up -d
-#
-# Run (standalone):
-#   docker run -d -p 3000:3000 -v $(pwd)/data:/app/data --env-file .env dbwiki:latest
+# Build (with proxy):
+#   docker build --build-arg http_proxy=http://10.36.51.102:10809 \
+#                --build-arg https_proxy=http://10.36.51.102:10809 \
+#                -t dbwiki:latest .
 # =============================================================================
+
+# ── Proxy args (pass via --build-arg) ─────────────────────────────────────────
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
 
 # ── Stage 1: Build ───────────────────────────────────────────────────────────
 FROM node:20-slim AS builder
 
+# Forward proxy args to this stage
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
+
 # Native module build dependencies (better-sqlite3, tedious, oracledb)
-RUN apt-get update && \
+RUN if [ -n "$http_proxy" ]; then \
+      echo "Acquire::http::Proxy \"$http_proxy\";" > /etc/apt/apt.conf.d/99proxy ; \
+      echo "Acquire::https::Proxy \"$https_proxy\";" >> /etc/apt/apt.conf.d/99proxy ; \
+    fi && \
+    apt-get update && \
     apt-get install -y --no-install-recommends python3 make g++ && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/99proxy
 
 WORKDIR /app
 
@@ -27,6 +40,7 @@ COPY client/package.json client/
 COPY server/package.json server/
 
 # Install ALL dependencies (including devDeps for tsc + vite)
+# npm respects HTTP_PROXY / HTTPS_PROXY env vars automatically
 RUN npm ci
 
 # Copy source and build
@@ -36,10 +50,18 @@ RUN npm run build
 # ── Stage 2: Production runtime ──────────────────────────────────────────────
 FROM node:20-slim
 
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
+
 # Native runtime deps for better-sqlite3 (and optional oracledb/tedious)
-RUN apt-get update && \
+RUN if [ -n "$http_proxy" ]; then \
+      echo "Acquire::http::Proxy \"$http_proxy\";" > /etc/apt/apt.conf.d/99proxy ; \
+      echo "Acquire::https::Proxy \"$https_proxy\";" >> /etc/apt/apt.conf.d/99proxy ; \
+    fi && \
+    apt-get update && \
     apt-get install -y --no-install-recommends python3 make g++ curl && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/99proxy
 
 WORKDIR /app
 
