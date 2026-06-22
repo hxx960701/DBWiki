@@ -65,9 +65,9 @@ RUN if [ -n "$http_proxy" ]; then \
 
 WORKDIR /app
 
-# Create non-root user
-RUN groupadd -g 1000 dbwiki && \
-    useradd -u 1000 -g dbwiki -s /bin/sh -m dbwiki && \
+# Create non-root user (GID/UID 1000 may already exist in Debian, use 1001)
+RUN if getent group dbwiki >/dev/null; then :; else groupadd -g 1001 dbwiki; fi && \
+    if id dbwiki >/dev/null 2>&1; then :; else useradd -u 1001 -g dbwiki -s /bin/sh -m dbwiki; fi && \
     mkdir -p /app/data /app/logs && \
     chown -R dbwiki:dbwiki /app
 
