@@ -1,7 +1,6 @@
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
 import morgan from 'morgan';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -15,27 +14,20 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-// Security: only CSP + basic protections.  COOP/COEP/HSTS are OFF because
-// they require HTTPS or localhost and break on intranet IP-based HTTP access.
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      'default-src': ["'self'"],
-      'script-src': ["'self'", "'unsafe-inline'"],
-      'style-src': ["'self'", "'unsafe-inline'"],
-      'img-src': ["'self'", 'data:', 'https:'],
-      'font-src': ["'self'", 'data:'],
-      'connect-src': ["'self'"],
-      'frame-ancestors': ["'self'"],
-    },
-  },
-  strictTransportSecurity: false,
-  crossOriginOpenerPolicy: false,
-  crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: false,
-  originAgentCluster: false,
-  frameguard: { action: 'sameorigin' },
-}));
+// Security headers — deliberately minimal.
+// We do NOT use helmet because its defaults (COOP, COEP, HSTS, Origin-Agent-Cluster)
+// trigger Chrome enterprise policy to force-upgrade subresource requests to HTTPS
+// on intranet IP-based origins, causing ERR_SSL_PROTOCOL_ERROR.
+app.use((_req, res, next) => {
+  // Only set CSP + basic protections.  No COOP/COEP/HSTS/Origin-Agent-Cluster.
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self'"
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  next();
+});
 
 app.use(cors({
   origin: process.env.CLIENT_URL || true,
