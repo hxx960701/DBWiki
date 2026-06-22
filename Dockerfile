@@ -87,6 +87,7 @@ COPY --from=builder /app/server/dist server/dist
 # Copy seed/migration SQL files (loaded at runtime by knex from dist/)
 COPY --from=builder /app/server/src/database/migrations server/dist/database/migrations
 COPY --from=builder /app/server/src/database/seeds server/dist/database/seeds
+COPY --from=builder /app/server/src/templates server/dist/templates
 
 # Drop to non-root
 USER dbwiki
