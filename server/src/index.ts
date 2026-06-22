@@ -1,5 +1,7 @@
 import dotenv from 'dotenv';
 import express from 'express';
+import https from 'https';
+import fs from 'fs';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -15,9 +17,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-// Middleware
+// Middleware — minimal security headers for intranet HTTP deployment.
+// Cross-Origin isolation headers (COOP/COEP) are disabled because they require
+// HTTPS or localhost; on IP-based intranet access they would cause browsers to
+// spuriously upgrade subresource requests to HTTPS.
 app.use(helmet({
-  // Relax CSP for SPA — allows inline scripts/styles, fonts, and images from any source.
   contentSecurityPolicy: {
     directives: {
       'default-src': ["'self'"],
@@ -29,13 +33,11 @@ app.use(helmet({
       'frame-ancestors': ["'self'"],
     },
   },
-  // Disable HSTS — internal deployment over HTTP (no TLS)
   strictTransportSecurity: false,
-  // Disable COOP/COEP — they require HTTPS or localhost, break on IP-based HTTP access
   crossOriginOpenerPolicy: false,
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' },
-  // Allow the page to be embedded in iframes from same origin
+  originAgentCluster: false,
   frameguard: { action: 'sameorigin' },
 }));
 app.use(cors({
@@ -69,9 +71,28 @@ app.use(errorHandler);
 async function start() {
   try {
     await initializeDatabase();
-    app.listen(PORT, () => {
-      console.log(`[Server] DBwiki running on http://localhost:${PORT}`);
-    });
+
+    // Try to load self-signed certificate (generated in Dockerfile).
+    // When present we serve HTTPS — required when Chrome enterprise policy
+    // forces HTTPS-upgrades on intranet IP addresses.
+    const certDir = path.join(__dirname, '../../certs');
+    const keyPath = path.join(certDir, 'server.key');
+    const certPath = path.join(certDir, 'server.crt');
+    const useHttps = fs.existsSync(keyPath) && fs.existsSync(certPath);
+
+    if (useHttps) {
+      const httpsOptions = {
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath),
+      };
+      https.createServer(httpsOptions, app).listen(PORT, () => {
+        console.log(`[Server] DBwiki running on https://0.0.0.0:${PORT}`);
+      });
+    } else {
+      app.listen(PORT, () => {
+        console.log(`[Server] DBwiki running on http://localhost:${PORT}`);
+      });
+    }
   } catch (err) {
     console.error('[Server] Failed to start:', err);
     process.exit(1);

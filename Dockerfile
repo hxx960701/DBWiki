@@ -60,8 +60,19 @@ RUN if [ -n "$http_proxy" ]; then \
       echo "Acquire::https::Proxy \"$https_proxy\";" >> /etc/apt/apt.conf.d/99proxy ; \
     fi && \
     apt-get update && \
-    apt-get install -y --no-install-recommends python3 make g++ curl && \
+    apt-get install -y --no-install-recommends python3 make g++ curl openssl && \
     rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/99proxy
+
+# Generate self-signed certificate for intranet HTTPS.
+# Chrome enterprise policies often force HTTPS-upgrades on IP-based origins;
+# a self-signed cert allows the browser to complete the TLS handshake (user
+# clicks "Advanced → Proceed" once).
+RUN mkdir -p /app/certs && \
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+      -keyout /app/certs/server.key \
+      -out /app/certs/server.crt \
+      -subj "/CN=DBwiki" && \
+    chown -R dbwiki:dbwiki /app/certs
 
 WORKDIR /app
 
@@ -94,6 +105,6 @@ USER dbwiki
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -sf http://127.0.0.1:3000/api/health || exit 1
+  CMD curl -skf https://127.0.0.1:3000/api/health || exit 1
 
 CMD ["node", "server/dist/index.js"]
