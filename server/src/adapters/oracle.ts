@@ -175,7 +175,7 @@ export class OracleAdapter implements DatabaseAdapter {
           columnDefault: r.DATA_DEFAULT ? String(r.DATA_DEFAULT).trim() : null,
           extra: '',
           columnComment: r.COMMENTS || '',
-          ordinalPosition: r.COLUMN_ID,
+          ordinalPosition: r.COLUMN_ID != null ? r.COLUMN_ID : 0,
         };
       });
     } finally {

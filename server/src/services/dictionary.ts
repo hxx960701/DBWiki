@@ -123,7 +123,7 @@ async function fetchLiveSnapshot(adapter: ReturnType<typeof createAdapter>): Pro
             column_default: c.columnDefault ?? null,
             extra: c.extra || '',
             column_comment: c.columnComment || '',
-            ordinal_position: c.ordinalPosition,
+            ordinal_position: c.ordinalPosition ?? 0,
           })),
           indexes: idxs.map((i) => ({
             index_name: i.indexName,
@@ -349,7 +349,7 @@ export async function applySyncSnapshot(
           custom_comment: override?.custom_comment ?? prevCol?.customComment ?? '',
           display_name: override?.display_name ?? prevCol?.displayName ?? '',
           tags: override?.tags ? JSON.stringify(override.tags) : (prevCol?.tags || '[]'),
-          ordinal_position: col.ordinal_position,
+          ordinal_position: col.ordinal_position ?? 0,
         });
       }
 
