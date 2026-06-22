@@ -12,10 +12,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        # Uncomment and set proxy if your server has no direct internet access
-        # http_proxy: http://10.36.51.102:10809
-        # https_proxy: http://10.36.51.102:10809
+      # Use --build-arg when building manually with proxy:
+      #   docker build --build-arg http_proxy=http://10.36.51.102:10809 \
+      #                --build-arg https_proxy=http://10.36.51.102:10809 \
+      #                -t dbwiki:latest .
     image: dbwiki:latest
     container_name: dbwiki
     restart: unless-stopped
