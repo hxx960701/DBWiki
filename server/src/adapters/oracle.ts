@@ -1,5 +1,5 @@
 import oracledb from 'oracledb';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo, SampleRowsResult } from './types.js';
 
 /** Default timeout (ms) for pool creation and connection test. */
 const CONNECT_TIMEOUT_MS = 15_000;
@@ -319,6 +319,40 @@ export class OracleAdapter implements DatabaseAdapter {
           ? new Date(obj.LAST_DDL_TIME).toISOString().split('T')[0]
           : '',
       }));
+    } finally {
+      await connection.close();
+    }
+  }
+
+  async getSampleRows(tableName: string, limit: number): Promise<SampleRowsResult> {
+    const pool = await this.getPool();
+    const connection = await withTimeout(
+      pool.getConnection(),
+      this.connectTimeoutMs,
+      'Oracle connection acquisition',
+    );
+    try {
+      // Oracle stores object names in uppercase by default; use the name from
+      // dictionary metadata (which preserves original case) uppercased to match.
+      const result = await connection.execute(
+        `SELECT * FROM "${tableName.toUpperCase()}" WHERE ROWNUM <= :limit`,
+        { limit },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const rows = (result.rows || []) as any[];
+      if (rows.length === 0) return { columns: [], rows: [] };
+      const columns = Object.keys(rows[0]);
+      const rowArrays = rows.map(r => columns.map(c => {
+        const val = r[c];
+        if (val instanceof Date) return val.toISOString();
+        if (Buffer.isBuffer(val)) return val.toString('utf8');
+        if (typeof val === 'object' && val !== null) {
+          // Handle potential LOB types
+          try { return JSON.stringify(val); } catch { return String(val); }
+        }
+        return val;
+      }));
+      return { columns, rows: rowArrays };
     } finally {
       await connection.close();
     }

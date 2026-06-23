@@ -46,6 +46,11 @@ export interface ProcedureInfo {
   lastModified: string;
 }
 
+export interface SampleRowsResult {
+  columns: string[];
+  rows: any[][];
+}
+
 export interface DatabaseAdapter {
   testConnection(): Promise<boolean>;
   getTables(): Promise<TableInfo[]>;
@@ -58,6 +63,11 @@ export interface DatabaseAdapter {
    * pipeline can call it unconditionally.
    */
   getProcedures(): Promise<ProcedureInfo[]>;
+  /**
+   * Fetch a sample of rows from the given table.
+   * Returns column names and up to `limit` rows as a 2D array.
+   */
+  getSampleRows(tableName: string, limit: number): Promise<SampleRowsResult>;
   disconnect(): Promise<void>;
 }
 

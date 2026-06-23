@@ -1,5 +1,5 @@
 import { InfluxDB, type QueryApi } from '@influxdata/influxdb-client';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, SampleRowsResult } from './types.js';
 
 export class InfluxDBAdapter implements DatabaseAdapter {
   private client: InfluxDB;
@@ -118,6 +118,10 @@ export class InfluxDBAdapter implements DatabaseAdapter {
 
   async getProcedures(): Promise<ProcedureInfo[]> {
     return [];
+  }
+
+  async getSampleRows(_tableName: string, _limit: number): Promise<SampleRowsResult> {
+    return { columns: [], rows: [] };
   }
 
   async disconnect(): Promise<void> {

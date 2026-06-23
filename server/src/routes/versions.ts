@@ -192,6 +192,30 @@ versionsRouter.get('/compare', async (req: Request, res: Response, next: NextFun
   }
 });
 
+// GET /dictionary/versions/drafts — list current user's own drafts
+versionsRouter.get('/drafts', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.userId;
+    const drafts = await knex('dictionary_versions as v')
+      .join('database_connections as dc', 'dc.id', 'v.connection_id')
+      .select(
+        'v.id',
+        'v.connection_id',
+        'v.version_number',
+        'v.status',
+        'v.created_by',
+        'v.created_at',
+        'v.notes',
+        'dc.database_name as connection_name',
+      )
+      .where({ 'v.status': 'draft', 'v.created_by': userId })
+      .orderBy('v.created_at', 'desc');
+    res.json(drafts);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /dictionary/versions/:connectionId — list versions
 versionsRouter.get('/:connectionId', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -340,11 +364,44 @@ versionsRouter.post('/:id/publish', async (req: Request, res: Response, next: Ne
 
     await ensureProjectAccess(req, version.connection_id, 'dictionary:publish');
 
+    // Stale check: if the draft was created before the latest published version,
+    // warn the user that the draft may be based on outdated structure.
+    if (!req.body.force) {
+      const latestPublished = await knex('dictionary_versions')
+        .where({ connection_id: version.connection_id, status: 'published' })
+        .orderBy('version_number', 'desc')
+        .first() as DictionaryVersion | undefined;
+
+      if (latestPublished && version.created_at < latestPublished.created_at) {
+        res.json({
+          stale: true,
+          message: `当前草稿创建于 ${version.created_at}，最新发布版 v${latestPublished.version_number} 创建于 ${latestPublished.created_at}。草稿可能基于旧结构，确认发布吗？`,
+          latestVersion: { id: latestPublished.id, version_number: latestPublished.version_number, created_at: latestPublished.created_at },
+          draftCreatedAt: version.created_at,
+        });
+        return;
+      }
+    }
+
     const notes: string = (req.body.notes ?? version.notes ?? '').toString();
+
+    // Ensure the published version_number is always higher than any existing version.
+    // If the draft was created before a higher-numbered version was published,
+    // bump its version_number to max+1.
+    let publishVersionNumber = version.version_number;
+    const maxVersion = await knex('dictionary_versions')
+      .where({ connection_id: version.connection_id })
+      .max('version_number as max_version')
+      .first() as any;
+    const maxExisting = Number(maxVersion?.max_version ?? 0);
+    if (publishVersionNumber <= maxExisting) {
+      publishVersionNumber = maxExisting + 1;
+    }
 
     await knex.transaction(async (trx) => {
       await trx('dictionary_versions').where({ id: versionId }).update({
         status: 'published',
+        version_number: publishVersionNumber,
         published_at: trx.fn.now(),
         notes,
       });
@@ -378,13 +435,16 @@ versionsRouter.delete('/:id', async (req: Request, res: Response, next: NextFunc
     const user = req.user!;
     const isSystemAdmin = user.role === 'admin';
     const hasAdminPerm = (user.permissions || []).includes('user:manage');
-    if (!isSystemAdmin && !hasAdminPerm) {
-      throw new AppError('Only administrators can delete versions', 403);
-    }
 
     const versionId = parseInt(req.params.id as string, 10);
     const version = await knex('dictionary_versions').where({ id: versionId }).first() as DictionaryVersion | undefined;
     if (!version) throw new AppError('Version not found', 404);
+
+    // Allow: admins OR the owner of a draft
+    const isOwnDraft = version.status === 'draft' && version.created_by === user.userId;
+    if (!isSystemAdmin && !hasAdminPerm && !isOwnDraft) {
+      throw new AppError('Only administrators or the draft owner can delete versions', 403);
+    }
 
     await knex.transaction(async (trx) => {
       // Defensive child cleanup: even if FK cascades aren't in place, do it

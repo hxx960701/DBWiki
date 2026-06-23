@@ -1,5 +1,5 @@
 import mysql from 'mysql2/promise';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo, SampleRowsResult } from './types.js';
 
 export class MySQLAdapter implements DatabaseAdapter {
   protected pool: mysql.Pool;
@@ -152,6 +152,15 @@ export class MySQLAdapter implements DatabaseAdapter {
       });
     }
     return out;
+  }
+
+  async getSampleRows(tableName: string, limit: number): Promise<SampleRowsResult> {
+    const [rows] = await this.pool.query(`SELECT * FROM \`${tableName}\` LIMIT ?`, [limit]);
+    const data = rows as any[];
+    if (data.length === 0) return { columns: [], rows: [] };
+    const columns = Object.keys(data[0]);
+    const rowArrays = data.map(r => columns.map(c => r[c]));
+    return { columns, rows: rowArrays };
   }
 
   async disconnect(): Promise<void> {

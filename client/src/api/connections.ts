@@ -33,4 +33,9 @@ export const connectionsApi = {
     client.post(`/connections/${id}/preview-sync`).then((r) => r.data),
   applySync: (id: number, data: { snapshot: any; overrides?: Record<string, any> }) =>
     client.post(`/connections/${id}/sync/apply`, data).then((r) => r.data),
+  dataPreview: (id: number, tableId: number, limit?: number) =>
+    client.post<{ columns: string[]; rows: any[][] }>(
+      `/connections/${id}/data-preview`,
+      { tableId, limit: limit || 10 },
+    ).then((r) => r.data),
 };

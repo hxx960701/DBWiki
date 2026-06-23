@@ -566,7 +566,7 @@ projectsRouter.get(
       const connectionsWithVersions = await Promise.all(
         connections.map(async (conn: any) => {
           const latestVersion = await knex('dictionary_versions')
-            .where({ connection_id: conn.id })
+            .where({ connection_id: conn.id, status: 'published' })
             .orderBy('version_number', 'desc')
             .first();
 

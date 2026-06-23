@@ -68,7 +68,8 @@ dictionaryRouter.get(
       let versionQuery = knex('dictionary_versions').where({ connection_id: connectionId });
 
       if (!versionParam || versionParam === 'latest') {
-        versionQuery = versionQuery.orderBy('version_number', 'desc').limit(1);
+        // Default: show latest published version
+        versionQuery = versionQuery.where({ status: 'published' }).orderBy('version_number', 'desc').limit(1);
       } else {
         const versionNumber = parseInt(versionParam, 10);
         if (isNaN(versionNumber)) {
@@ -77,9 +78,16 @@ dictionaryRouter.get(
         versionQuery = versionQuery.where({ version_number: versionNumber });
       }
 
-      const version = await versionQuery.first();
+      let version = await versionQuery.first();
       if (!version) {
-        throw new AppError('Version not found', 404);
+        // No published version yet — fall back to any latest version (first sync / draft)
+        version = await knex('dictionary_versions')
+          .where({ connection_id: connectionId })
+          .orderBy('version_number', 'desc')
+          .first();
+        if (!version) {
+          throw new AppError('Version not found', 404);
+        }
       }
 
       const tables = await knex('dictionary_tables')

@@ -1,5 +1,5 @@
 import mssql from 'mssql';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo, SampleRowsResult } from './types.js';
 
 export class MSSQLAdapter implements DatabaseAdapter {
   private pool: mssql.ConnectionPool | null = null;
@@ -215,6 +215,19 @@ export class MSSQLAdapter implements DatabaseAdapter {
       procedureComment: o.procedure_comment || '',
       lastModified: o.modify_date ? new Date(o.modify_date).toISOString().split('T')[0] : '',
     }));
+  }
+
+  async getSampleRows(tableName: string, limit: number): Promise<SampleRowsResult> {
+    const pool = await this.getPool();
+    const result = await pool.request()
+      .input('tableName', mssql.NVarChar, tableName)
+      .input('limit', mssql.Int, limit)
+      .query(`SELECT TOP (@limit) * FROM [${tableName}]`);
+    const rows = result.recordset;
+    if (rows.length === 0) return { columns: [], rows: [] };
+    const columns = Object.keys(rows[0]);
+    const rowArrays = rows.map((r: any) => columns.map(c => r[c]));
+    return { columns, rows: rowArrays };
   }
 
   async disconnect(): Promise<void> {

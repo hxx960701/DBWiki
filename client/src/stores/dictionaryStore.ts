@@ -120,7 +120,7 @@ export const useDictionaryStore = create<DictionaryState>((set, get) => ({
     set({ syncing: true });
     try {
       const v = await connectionsApi.sync(connectionId);
-      await get().fetchDictionary(connectionId);
+      await get().fetchDictionary(connectionId, v.version_number);
       await get().fetchVersions(connectionId);
       set({ syncing: false });
       return v;
@@ -150,7 +150,7 @@ export const useDictionaryStore = create<DictionaryState>((set, get) => ({
         overrides: get().syncOverrides,
       });
       set({ syncing: false, syncDiff: null, syncOverrides: {} });
-      await get().fetchDictionary(connectionId);
+      await get().fetchDictionary(connectionId, v.version_number);
       await get().fetchVersions(connectionId);
       return v;
     } catch (e) {

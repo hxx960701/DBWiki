@@ -1,5 +1,5 @@
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, SampleRowsResult } from './types.js';
 
 export class ClickHouseAdapter implements DatabaseAdapter {
   private client: ClickHouseClient;
@@ -109,6 +109,19 @@ export class ClickHouseAdapter implements DatabaseAdapter {
 
   async getProcedures(): Promise<ProcedureInfo[]> {
     return [];
+  }
+
+  async getSampleRows(tableName: string, limit: number): Promise<SampleRowsResult> {
+    const result = await this.client.query({
+      query: `SELECT * FROM {table:Identifier} LIMIT {limit:UInt32}`,
+      query_params: { table: tableName, limit },
+      format: 'JSONEachRow',
+    });
+    const rows = await result.json<any>();
+    if (rows.length === 0) return { columns: [], rows: [] };
+    const columns = Object.keys(rows[0]);
+    const rowArrays = rows.map((r: any) => columns.map(c => r[c]));
+    return { columns, rows: rowArrays };
   }
 
   async disconnect(): Promise<void> {

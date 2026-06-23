@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Layout, Input, List, Tag, Table, Tabs, Select, Button, Space, Typography,
   Badge, Spin, Empty, Card, message, Drawer, Alert, Form, Input as AntInput,
-  Modal, Result,
+  Modal, Result, Tooltip,
 } from 'antd';
 import {
   SyncOutlined, ArrowLeftOutlined, SaveOutlined, CloudUploadOutlined,
@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import { useDictionaryStore } from '../../stores/dictionaryStore';
 import { dictionaryApi } from '../../api/dictionary';
+import { connectionsApi } from '../../api/connections';
 import { useAuthStore } from '../../stores/authStore';
 import type { DictionaryColumn, DictionaryProcedure } from '../../types';
 
@@ -51,6 +52,13 @@ const DictionaryBrowser: React.FC = () => {
   const [publishForm] = Form.useForm();
   const [exporting, setExporting] = useState(false);
   const [topTab, setTopTab] = useState<string>('tables');
+  const [detailTabKey, setDetailTabKey] = useState<string>('columns');
+  const [sampleData, setSampleData] = useState<{ columns: string[]; rows: any[][] } | null>(null);
+  const [sampleLoading, setSampleLoading] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
+  const [draftDrawerOpen, setDraftDrawerOpen] = useState(false);
+  const [drafts, setDrafts] = useState<any[]>([]);
+  const [draftsLoading, setDraftsLoading] = useState(false);
 
   const canEdit = hasPermission('dictionary:edit');
   const canSave = hasPermission('dictionary:save');
@@ -62,14 +70,98 @@ const DictionaryBrowser: React.FC = () => {
     + Object.keys(pendingColumnChanges).length
     + Object.keys(pendingProcedureChanges).length;
 
+  // Only show published versions in the dropdown — drafts are internal.
+  const publishedVersions = versions.filter((v) => v.status === 'published');
+
+  // Warn on exit if there are unsaved edits or a draft version
+  const hasDraftWork = pendingCount > 0 || currentVersion?.status === 'draft';
+
   useEffect(() => {
     fetchVersions(connectionId);
     fetchDictionary(connectionId, 'latest');
   }, [connectionId]);
 
-  const filteredTables = tables.filter((t) =>
-    t.table_name.toLowerCase().includes(searchText.toLowerCase()),
-  );
+  // beforeunload — warn when closing tab with unsaved changes
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (hasDraftWork) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasDraftWork]);
+
+  // Guarded navigate — confirm before leaving with unsaved changes
+  const navigatingAway = useRef(false);
+  useEffect(() => {
+    navigatingAway.current = false;
+  }, [hasDraftWork]);
+
+  // popstate — intercept browser back/forward with unsaved changes
+  useEffect(() => {
+    if (!hasDraftWork) return;
+    const handler = () => {
+      if (navigatingAway.current) return;
+      // Push state back to cancel the navigation
+      window.history.pushState(null, '', window.location.href);
+      Modal.confirm({
+        title: '未保存的修改',
+        content: `有草稿未发布，退出后将丢失。系统只保留已发布的字典版本。确定离开吗？`,
+        okText: '离开',
+        cancelText: '留下',
+        onOk: () => {
+          navigatingAway.current = true;
+          window.history.back();
+        },
+        onCancel: () => { /* already pushed state back */ },
+      });
+    };
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
+  }, [hasDraftWork]);
+
+  const guardedNavigate = (to: number | string) => {
+    if (hasDraftWork) {
+      Modal.confirm({
+        title: '未保存的修改',
+        content: `有草稿未发布，退出后将丢失。系统只保留已发布的字典版本。确定离开吗？`,
+        okText: '离开',
+        cancelText: '留下',
+        onOk: () => navigate(to as any),
+      });
+    } else {
+      navigate(to as any);
+    }
+  };
+
+  const filteredTables = tables
+    .map((t) => {
+      if (!searchText.trim()) {
+        return { table: t, matchedColumnNames: [] as string[] };
+      }
+      const q = searchText.toLowerCase().trim();
+      // Search table-level fields
+      const tableMatch =
+        t.table_name.toLowerCase().includes(q)
+        || (t.table_comment || '').toLowerCase().includes(q)
+        || (t.custom_comment || '').toLowerCase().includes(q);
+      // Search column-level fields
+      const matchedColumnNames: string[] = [];
+      for (const col of t.columns || []) {
+        const colMatch =
+          col.column_name.toLowerCase().includes(q)
+          || (col.column_comment || '').toLowerCase().includes(q)
+          || (col.custom_comment || '').toLowerCase().includes(q)
+          || (col.display_name || '').toLowerCase().includes(q);
+        if (colMatch) matchedColumnNames.push(col.column_name);
+      }
+      const match = tableMatch || matchedColumnNames.length > 0;
+      if (!match) return null;
+      return { table: t, matchedColumnNames };
+    })
+    .filter((item): item is { table: typeof tables[0]; matchedColumnNames: string[] } => item !== null);
   const selectedTable = tables.find((t) => t.id === selectedTableId);
 
   const filteredProcedures = procedures.filter((p) => {
@@ -125,10 +217,39 @@ const DictionaryBrowser: React.FC = () => {
   const handlePublish = async () => {
     try {
       const { notes } = await publishForm.validateFields();
-      await publishCurrent(notes);
-      message.success('已发布');
-      setPublishOpen(false);
-      publishForm.resetFields();
+      const v = currentVersion;
+      if (!v) throw new Error('No version to publish');
+
+      const result = await dictionaryApi.publishVersionWithForce(v.id, notes, false);
+      if (result.stale) {
+        // Draft is based on outdated structure — ask user to confirm
+        Modal.confirm({
+          title: '草稿可能不是最新结构',
+          content: result.message,
+          okText: '确认发布',
+          cancelText: '取消',
+          onOk: async () => {
+            try {
+              await dictionaryApi.publishVersionWithForce(v.id, notes, true);
+              message.success('已发布');
+              setPublishOpen(false);
+              publishForm.resetFields();
+              fetchDictionary(connectionId, 'latest');
+              fetchVersions(connectionId);
+              loadDrafts();
+            } catch (e: any) {
+              message.error(e.response?.data?.error || '发布失败');
+            }
+          },
+        });
+      } else {
+        message.success('已发布');
+        setPublishOpen(false);
+        publishForm.resetFields();
+        fetchDictionary(connectionId, 'latest');
+        fetchVersions(connectionId);
+        loadDrafts();
+      }
     } catch (err: any) {
       if (err?.errorFields) return;
       message.error('发布失败: ' + (err.response?.data?.error || err.message));
@@ -146,6 +267,111 @@ const DictionaryBrowser: React.FC = () => {
       setExporting(false);
     }
   };
+
+  // ---- Draft box ----
+  const loadDrafts = async () => {
+    setDraftsLoading(true);
+    try {
+      const data = await dictionaryApi.getDrafts();
+      setDrafts(Array.isArray(data) ? data : []);
+    } catch {
+      message.error('加载草稿失败');
+    }
+    setDraftsLoading(false);
+  };
+
+  const openDraftBox = () => {
+    loadDrafts();
+    setDraftDrawerOpen(true);
+  };
+
+  const handleViewDraft = (draft: any) => {
+    setDraftDrawerOpen(false);
+    setSelectedVersion(String(draft.version_number));
+    fetchDictionary(connectionId, draft.version_number);
+  };
+
+  const handleDeleteDraft = (draft: any) => {
+    Modal.confirm({
+      title: '删除草稿',
+      content: `确定删除 v${draft.version_number}（${draft.connection_name}）的草稿吗？`,
+      okText: '删除',
+      cancelText: '取消',
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          await dictionaryApi.deleteDraft(draft.id);
+          message.success('草稿已删除');
+          loadDrafts();
+        } catch (err: any) {
+          message.error(err.response?.data?.error || '删除失败');
+        }
+      },
+    });
+  };
+
+  const handlePublishDraft = async (draft: any) => {
+    try {
+      const result = await dictionaryApi.publishVersionWithForce(draft.id, '', false);
+      if (result.stale) {
+        Modal.confirm({
+          title: '草稿可能不是最新结构',
+          content: result.message,
+          okText: '确认发布',
+          cancelText: '取消',
+          onOk: async () => {
+            try {
+              await dictionaryApi.publishVersionWithForce(draft.id, '', true);
+              message.success('已发布');
+              loadDrafts();
+              if (connectionId === draft.connection_id) {
+                fetchDictionary(connectionId, 'latest');
+                fetchVersions(connectionId);
+              }
+            } catch (e: any) {
+              message.error(e.response?.data?.error || '发布失败');
+            }
+          },
+        });
+      } else {
+        message.success('已发布');
+        loadDrafts();
+        if (connectionId === draft.connection_id) {
+          fetchDictionary(connectionId, 'latest');
+          fetchVersions(connectionId);
+        }
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.error || '发布失败');
+    }
+  };
+
+  const fetchSampleData = useCallback(async (tableId: number) => {
+    setSampleLoading(true);
+    setSampleError(null);
+    setSampleData(null);
+    try {
+      const data = await connectionsApi.dataPreview(connectionId, tableId, 10);
+      setSampleData(data);
+    } catch (err: any) {
+      setSampleError(err.response?.data?.error || err.message || '加载数据预览失败');
+    } finally {
+      setSampleLoading(false);
+    }
+  }, [connectionId]);
+
+  // Clear sample data when table selection changes
+  useEffect(() => {
+    setSampleData(null);
+    setSampleError(null);
+  }, [selectedTableId]);
+
+  // Fetch sample data when switching to the data-preview tab
+  useEffect(() => {
+    if (detailTabKey === 'data-preview' && selectedTableId && !sampleData && !sampleLoading) {
+      fetchSampleData(selectedTableId);
+    }
+  }, [detailTabKey, selectedTableId, sampleData, sampleLoading, fetchSampleData]);
 
   // Editable cell writes to pending state only.
   const EditableCell: React.FC<{
@@ -302,6 +528,51 @@ const DictionaryBrowser: React.FC = () => {
       label: 'DDL',
       children: <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 4, overflow: 'auto', fontSize: 13, fontFamily: 'monospace' }}>{generateDDL(selectedTable)}</pre>,
     },
+    {
+      key: 'data-preview',
+      label: '数据预览',
+      children: (
+        <>
+          {sampleLoading && (
+            <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+          )}
+          {sampleError && !sampleLoading && (
+            <Alert type="error" message={sampleError} style={{ margin: 16 }} />
+          )}
+          {sampleData && !sampleLoading && !sampleError && (
+            sampleData.columns.length === 0 ? (
+              <Alert type="info" message="该表无数据" style={{ margin: 16 }} />
+            ) : (
+              <Table
+                dataSource={sampleData.rows.map((row, i) => {
+                  const obj: Record<string, any> = { _rowIndex: i + 1 };
+                  sampleData.columns.forEach((col, j) => { obj[col] = row[j]; });
+                  return obj;
+                })}
+                columns={[
+                  { title: '#', dataIndex: '_rowIndex', key: '_rowIndex', width: 50, fixed: 'left' },
+                  ...sampleData.columns.map((col) => ({
+                    title: col,
+                    dataIndex: col,
+                    key: col,
+                    ellipsis: true,
+                    render: (val: any) => {
+                      if (val === null) return <Text type="secondary">NULL</Text>;
+                      if (typeof val === 'object') return JSON.stringify(val);
+                      return String(val);
+                    },
+                  })),
+                ]}
+                rowKey="_rowIndex"
+                size="small"
+                scroll={{ x: 'max-content', y: 400 }}
+                pagination={false}
+              />
+            )
+          )}
+        </>
+      ),
+    },
   ] : [];
 
   // ====== Procedure detail tabs ======
@@ -397,13 +668,13 @@ const DictionaryBrowser: React.FC = () => {
     <Layout style={{ height: 'calc(100vh - 320px)', background: 'transparent' }}>
       <Sider width={300} style={{ background: '#fff', borderRight: '1px solid #f0f0f0', overflow: 'hidden' }}>
         <div style={{ padding: '12px 16px' }}>
-          <Search placeholder="搜索表名..." allowClear onChange={(e) => setSearchText(e.target.value)} size="small" />
+          <Search placeholder="搜索表名/注释..." allowClear onChange={(e) => setSearchText(e.target.value)} size="small" />
         </div>
         <div style={{ overflowY: 'auto', height: 'calc(100% - 80px)' }}>
           <List
             size="small"
             dataSource={filteredTables}
-            renderItem={(table) => (
+            renderItem={({ table, matchedColumnNames }) => (
               <List.Item
                 onClick={() => selectTable(table.id)}
                 style={{
@@ -416,6 +687,13 @@ const DictionaryBrowser: React.FC = () => {
                 <div style={{ width: '100%' }}>
                   <div style={{ fontWeight: table.id === selectedTableId ? 600 : 400, fontSize: 13 }}>
                     {table.table_name}
+                    {matchedColumnNames.length > 0 && (
+                      <Tooltip title={`匹配的字段: ${matchedColumnNames.join(', ')}`}>
+                        <Tag color="blue" style={{ marginLeft: 8, fontSize: 10 }}>
+                          匹配{matchedColumnNames.length}列
+                        </Tag>
+                      </Tooltip>
+                    )}
                   </div>
                   <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
                     {table.engine && <span>{table.engine}</span>}
@@ -429,6 +707,11 @@ const DictionaryBrowser: React.FC = () => {
         </div>
         <div style={{ padding: '8px 16px', borderTop: '1px solid #f0f0f0', fontSize: 12, color: '#999' }}>
           共 {filteredTables.length} / {tables.length} 张表
+          {searchText.trim() && (
+            <span style={{ marginLeft: 8 }}>
+              (列匹配: {filteredTables.reduce((sum, item) => sum + item.matchedColumnNames.length, 0)})
+            </span>
+          )}
         </div>
       </Sider>
       <Content style={{ padding: '0 16px', overflow: 'auto' }}>
@@ -459,7 +742,7 @@ const DictionaryBrowser: React.FC = () => {
                 )}
               </div>
             </Card>
-            <Tabs items={detailTabs} size="small" />
+            <Tabs items={detailTabs} size="small" activeKey={detailTabKey} onChange={setDetailTabKey} />
           </>
         ) : (
           <Empty description="请从左侧选择一张表" style={{ marginTop: 100 }} />
@@ -540,7 +823,7 @@ const DictionaryBrowser: React.FC = () => {
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Space>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>返回</Button>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => guardedNavigate(-1)}>返回</Button>
             <Title level={5} style={{ margin: 0 }}>
               <TableOutlined /> 数据字典
             </Title>
@@ -560,17 +843,20 @@ const DictionaryBrowser: React.FC = () => {
               style={{ width: 160 }}
               options={[
                 { value: 'latest', label: '最新版本' },
-                ...versions.map((v) => ({
+                ...publishedVersions.map((v) => ({
                   value: String(v.version_number),
-                  label: `v${v.version_number} (${v.status === 'published' ? '已发布' : '草稿'})`,
+                  label: `v${v.version_number}`,
                 })),
               ]}
             />
             <Button
               icon={<HistoryOutlined />}
-              onClick={() => navigate(`/connections/${connectionId}/versions`)}
+              onClick={() => guardedNavigate(`/connections/${connectionId}/versions`)}
             >
               版本历史
+            </Button>
+            <Button onClick={openDraftBox}>
+              草稿箱
             </Button>
             {canSync && (
               <Button icon={<SyncOutlined />} loading={syncing} onClick={handleSync} type="default">
@@ -624,7 +910,7 @@ const DictionaryBrowser: React.FC = () => {
             type="warning"
             showIcon
             message={`有 ${pendingCount} 处未保存的改动`}
-            description="修改只在本地累积。点击「保存」会创建/更新草稿，「发布」会把当前草稿发布为正式版本。"
+            description="系统只保留已发布的字典版本。修改需要先「保存」为草稿，再「发布」为正式版本。退出页面后草稿将被丢弃。"
           />
         )}
       </Card>
@@ -823,6 +1109,38 @@ const DictionaryBrowser: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* Draft box drawer */}
+      <Drawer
+        title="草稿箱"
+        open={draftDrawerOpen}
+        onClose={() => setDraftDrawerOpen(false)}
+        width={520}
+      >
+        {draftsLoading ? (
+          <Spin />
+        ) : drafts.length === 0 ? (
+          <Empty description="暂无草稿" />
+        ) : (
+          <List
+            dataSource={drafts}
+            renderItem={(draft: any) => (
+              <List.Item
+                actions={[
+                  <Button type="link" size="small" onClick={() => handleViewDraft(draft)}>查看</Button>,
+                  <Button type="link" size="small" onClick={() => handlePublishDraft(draft)}>发布</Button>,
+                  <Button type="link" size="small" danger onClick={() => handleDeleteDraft(draft)}>删除</Button>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={<span>v{draft.version_number} · {draft.connection_name}</span>}
+                  description={`创建于 ${draft.created_at}`}
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Drawer>
     </div>
   );
 };

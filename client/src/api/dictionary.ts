@@ -54,4 +54,10 @@ export const dictionaryApi = {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     return filename;
   },
+  getDrafts: () =>
+    client.get('/dictionary/versions/drafts').then((r) => r.data),
+  deleteDraft: (versionId: number) =>
+    client.delete(`/dictionary/versions/${versionId}`).then((r) => r.data),
+  publishVersionWithForce: (versionId: number, notes?: string, force?: boolean) =>
+    client.post(`/dictionary/versions/${versionId}/publish`, { notes, force }).then((r) => r.data),
 };

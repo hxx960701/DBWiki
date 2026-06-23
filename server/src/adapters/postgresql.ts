@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo, SampleRowsResult } from './types.js';
 
 export class PostgreSQLAdapter implements DatabaseAdapter {
   private pool: pg.Pool;
@@ -171,6 +171,15 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
         lastModified: '',
       };
     });
+  }
+
+  async getSampleRows(tableName: string, limit: number): Promise<SampleRowsResult> {
+    const result = await this.pool.query(`SELECT * FROM "${tableName}" LIMIT $1`, [limit]);
+    const rows = result.rows;
+    if (rows.length === 0) return { columns: [], rows: [] };
+    const columns = Object.keys(rows[0]);
+    const rowArrays = rows.map((r: any) => columns.map(c => r[c]));
+    return { columns, rows: rowArrays };
   }
 
   async disconnect(): Promise<void> {

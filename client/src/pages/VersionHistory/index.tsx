@@ -36,7 +36,8 @@ const VersionHistory: React.FC = () => {
     try {
       const data = await dictionaryApi.getVersions(connectionId);
       // BUGFIX: backend returns the array directly, not `{ data: [...] }`
-      setVersions(Array.isArray(data) ? data : []);
+      // Only show published versions; drafts are internal and not listed.
+      setVersions(Array.isArray(data) ? data.filter((v: any) => v.status === 'published') : []);
     } catch {
       message.error('加载版本失败');
     }

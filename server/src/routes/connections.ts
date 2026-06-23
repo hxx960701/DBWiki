@@ -217,3 +217,53 @@ connectionActionsRouter.post(
     }
   },
 );
+
+// POST /connections/:id/data-preview - fetch sample rows from a live table
+const dataPreviewSchema = z.object({
+  tableId: z.number().int().positive(),
+  limit: z.number().int().min(1).max(1000).optional().default(10),
+});
+
+connectionActionsRouter.post(
+  '/:id/data-preview',
+  validate(dataPreviewSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const connection = await loadAuthorizedConnection(req, 'dictionary:read');
+      const { tableId, limit } = req.body;
+
+      // Look up the table name from dictionary metadata — never from user input.
+      const tableRow = await knex('dictionary_tables').where({ id: tableId }).first() as any;
+      if (!tableRow) {
+        throw new AppError('Table not found in dictionary metadata', 404);
+      }
+
+      // Verify the table belongs to a version owned by this connection.
+      const version = await knex('dictionary_versions')
+        .where({ id: tableRow.version_id, connection_id: connection.id })
+        .first();
+      if (!version) {
+        throw new AppError('Table does not belong to this connection', 403);
+      }
+
+      const password = decrypt(connection.encrypted_password);
+      const adapter = createAdapter(connection.db_type, {
+        host: connection.host,
+        port: connection.port,
+        database: connection.database_name,
+        username: connection.username,
+        password,
+        extraConfig: connection.extra_config ? JSON.parse(connection.extra_config) : {},
+      });
+
+      try {
+        const result = await adapter.getSampleRows(tableRow.table_name, limit);
+        res.json(result);
+      } finally {
+        try { await adapter.disconnect(); } catch { /* noop */ }
+      }
+    } catch (error) {
+      next(error);
+    }
+  },
+);
