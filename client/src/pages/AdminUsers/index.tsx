@@ -11,6 +11,49 @@ import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
+// Inline-editable display name cell
+const EditableDisplayName: React.FC<{ value: string; userId: number; onSaved: () => void }> = ({ value, userId, onSaved }) => {
+  const [editing, setEditing] = useState(false);
+  const [inputVal, setInputVal] = useState(value);
+
+  useEffect(() => { setInputVal(value); }, [value]);
+
+  const handleSave = async () => {
+    if (inputVal.trim() && inputVal !== value) {
+      try {
+        await adminApi.updateDisplayName(userId, inputVal.trim());
+        onSaved();
+      } catch {
+        setInputVal(value);
+      }
+    }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <Input
+        value={inputVal}
+        onChange={(e) => setInputVal(e.target.value)}
+        onBlur={handleSave}
+        onPressEnter={handleSave}
+        autoFocus
+        size="small"
+        style={{ width: 140 }}
+      />
+    );
+  }
+
+  return (
+    <span
+      onClick={() => setEditing(true)}
+      style={{ cursor: 'pointer', minHeight: 22, display: 'inline-block' }}
+    >
+      {value || <Text type="secondary">点击设置</Text>}
+    </span>
+  );
+};
+
 interface UserRow {
   id: number;
   username: string;
@@ -137,7 +180,15 @@ const AdminUsers: React.FC = () => {
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '用户名', dataIndex: 'username', key: 'username' },
-    { title: '用户名称', dataIndex: 'display_name', key: 'display_name', render: (v: string) => v || '-' },
+    { title: '用户名称', key: 'display_name', width: 160,
+      render: (_: any, record: UserRow) => (
+        <EditableDisplayName
+          value={record.display_name}
+          userId={record.id}
+          onSaved={fetchUsers}
+        />
+      ),
+    },
     {
       title: '类型',
       key: 'role',

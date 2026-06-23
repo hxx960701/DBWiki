@@ -312,6 +312,36 @@ adminRouter.put(
   },
 );
 
+const updateDisplayNameSchema = z.object({
+  display_name: z.string().min(1).max(100),
+});
+
+// PUT /admin/users/:id/display-name — update user's display name
+adminRouter.put(
+  '/users/:id/display-name',
+  requirePermission('user:manage'),
+  validate(updateDisplayNameSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = parseInt(req.params.id as string, 10);
+      const { display_name } = req.body;
+
+      const user = await knex('users').where({ id: userId }).first();
+      if (!user) throw new AppError('User not found', 404);
+
+      await knex('users').where({ id: userId }).update({ display_name, updated_at: knex.fn.now() });
+
+      const updated = await knex('users')
+        .select('id', 'username', 'display_name', 'email', 'role', 'created_at', 'updated_at')
+        .where({ id: userId })
+        .first();
+      res.json(updated);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 // DELETE /admin/users/:id — delete user and all related rows (CASCADE handles user_roles, project_members).
 adminRouter.delete(
   '/users/:id',

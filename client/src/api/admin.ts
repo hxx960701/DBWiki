@@ -22,4 +22,6 @@ export const adminApi = {
     client.delete(`/admin/users/${userId}`).then((r) => r.data),
   resetPassword: (userId: number, newPassword: string) =>
     client.put(`/admin/users/${userId}/reset-password`, { newPassword }).then((r) => r.data),
+  updateDisplayName: (userId: number, display_name: string) =>
+    client.put(`/admin/users/${userId}/display-name`, { display_name }).then((r) => r.data),
 };
