@@ -392,18 +392,13 @@ versionsRouter.post('/:id/publish', async (req: Request, res: Response, next: Ne
 
     const notes: string = (req.body.notes ?? version.notes ?? '').toString();
 
-    // Ensure the published version_number is always higher than any existing version.
-    // If the draft was created before a higher-numbered version was published,
-    // bump its version_number to max+1.
-    let publishVersionNumber = version.version_number;
-    const maxVersion = await knex('dictionary_versions')
-      .where({ connection_id: version.connection_id })
+    // Always assign the next published version number so the published
+    // version sequence is contiguous and independent of draft numbering.
+    const maxPublished = await knex('dictionary_versions')
+      .where({ connection_id: version.connection_id, status: 'published' })
       .max('version_number as max_version')
       .first() as any;
-    const maxExisting = Number(maxVersion?.max_version ?? 0);
-    if (publishVersionNumber <= maxExisting) {
-      publishVersionNumber = maxExisting + 1;
-    }
+    const publishVersionNumber = Number(maxPublished?.max_version ?? 0) + 1;
 
     await knex.transaction(async (trx) => {
       await trx('dictionary_versions').where({ id: versionId }).update({
