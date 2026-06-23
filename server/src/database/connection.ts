@@ -5,35 +5,65 @@ import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const dbPath = process.env.DB_PATH || './data/dbwiki.sqlite3';
-
-// Ensure data directory exists
-const dataDir = path.dirname(path.resolve(dbPath));
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+// Read optional database config for MySQL support
+interface DbConfig {
+  type: 'sqlite' | 'mysql';
+  mysql?: { host: string; port: number; database: string; user: string; password: string };
 }
 
-export const knex = Knex({
-  client: 'better-sqlite3',
-  connection: { filename: dbPath },
-  useNullAsDefault: true,
-  pool: {
-    afterCreate: (conn: any, cb: Function) => {
-      conn.pragma('journal_mode = WAL');
-      conn.pragma('foreign_keys = ON');
-      cb(null, conn);
+let dbConfig: DbConfig = { type: 'sqlite' };
+const configPath = path.resolve('./data/database-config.json');
+if (fs.existsSync(configPath)) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    if (raw.type === 'mysql') dbConfig = raw;
+  } catch { /* ignore */ }
+}
+
+let knexInstance: Knex.Knex;
+
+if (dbConfig.type === 'mysql' && dbConfig.mysql) {
+  knexInstance = Knex({
+    client: 'mysql2',
+    connection: {
+      host: dbConfig.mysql.host,
+      port: dbConfig.mysql.port,
+      user: dbConfig.mysql.user,
+      password: dbConfig.mysql.password,
+      database: dbConfig.mysql.database,
     },
-  },
-});
+    pool: { min: 2, max: 10 },
+    migrations: {
+      directory: path.join(__dirname, 'migrations'),
+      extension: 'js',
+    },
+  });
+} else {
+  const dbPath = process.env.DB_PATH || './data/dbwiki.sqlite3';
+  const dataDir = path.dirname(path.resolve(dbPath));
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+  knexInstance = Knex({
+    client: 'better-sqlite3',
+    connection: { filename: dbPath },
+    useNullAsDefault: true,
+    pool: {
+      afterCreate: (conn: any, cb: Function) => {
+        conn.pragma('journal_mode = WAL');
+        conn.pragma('foreign_keys = ON');
+        cb(null, conn);
+      },
+    },
+  });
+}
+
+export const knex = knexInstance;
+
+export function getDatabaseType(): string {
+  return dbConfig.type;
+}
 
 export async function initializeDatabase() {
-  // Run migrations. In production (dist/) the migrations directory may contain
-  // both .js and .d.ts files (tsc emits both when declaration:true). Knex would
-  // try to load the .d.ts as a migration and fail with "must have up/down".
-  //
-  // We list .js only when running compiled output. In dev (tsx) the directory
-  // contains .ts files, so include both extensions. The .d.ts case is handled
-  // by never emitting them in tsconfig (declaration: false).
   const inProduction = __dirname.includes(`${path.sep}dist${path.sep}`);
   const loadExtensions = inProduction ? ['.js'] : ['.js', '.ts'];
 
@@ -43,7 +73,6 @@ export async function initializeDatabase() {
   });
   console.log('[DB] Migrations complete');
 
-  // Run seeds
   await knex.seed.run({
     directory: path.join(__dirname, 'seeds'),
     loadExtensions,

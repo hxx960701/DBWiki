@@ -206,34 +206,47 @@ async function fetchLiveSnapshot(
 
 async function loadStoredTables(versionId: number): Promise<TableSnapshot[]> {
   const tables = await knex('dictionary_tables').where({ version_id: versionId });
-  const out: TableSnapshot[] = [];
-  for (const t of tables) {
-    const cols = await knex('dictionary_columns').where({ table_id: t.id }).orderBy('ordinal_position');
-    const idxs = await knex('dictionary_indexes').where({ table_id: t.id });
-    out.push({
-      table_name: t.table_name,
-      table_comment: t.table_comment || '',
-      engine: t.engine || '',
-      row_count: t.row_count || 0,
-      columns: cols.map((c: any) => ({
-        column_name: c.column_name,
-        column_type: c.column_type,
-        is_nullable: c.is_nullable,
-        column_key: c.column_key || '',
-        column_default: c.column_default ?? null,
-        extra: c.extra || '',
-        column_comment: c.column_comment || '',
-        ordinal_position: c.ordinal_position,
-      })),
-      indexes: idxs.map((i: any) => ({
-        index_name: i.index_name,
-        index_type: i.index_type,
-        columns: JSON.parse(i.columns || '[]'),
-        is_unique: !!i.is_unique,
-      })),
-    });
+  if (tables.length === 0) return [];
+
+  const tableIds = tables.map((t: any) => t.id);
+  const [allCols, allIdxs] = await Promise.all([
+    knex('dictionary_columns').whereIn('table_id', tableIds).orderBy('ordinal_position'),
+    knex('dictionary_indexes').whereIn('table_id', tableIds),
+  ]);
+
+  const colsByTable = new Map<number, any[]>();
+  for (const c of allCols) {
+    if (!colsByTable.has(c.table_id)) colsByTable.set(c.table_id, []);
+    colsByTable.get(c.table_id)!.push(c);
   }
-  return out;
+  const idxsByTable = new Map<number, any[]>();
+  for (const i of allIdxs) {
+    if (!idxsByTable.has(i.table_id)) idxsByTable.set(i.table_id, []);
+    idxsByTable.get(i.table_id)!.push(i);
+  }
+
+  return tables.map((t: any) => ({
+    table_name: t.table_name,
+    table_comment: t.table_comment || '',
+    engine: t.engine || '',
+    row_count: t.row_count || 0,
+    columns: (colsByTable.get(t.id) || []).map((c: any) => ({
+      column_name: c.column_name,
+      column_type: c.column_type,
+      is_nullable: c.is_nullable,
+      column_key: c.column_key || '',
+      column_default: c.column_default ?? null,
+      extra: c.extra || '',
+      column_comment: c.column_comment || '',
+      ordinal_position: c.ordinal_position,
+    })),
+    indexes: (idxsByTable.get(t.id) || []).map((i: any) => ({
+      index_name: i.index_name,
+      index_type: i.index_type,
+      columns: JSON.parse(i.columns || '[]'),
+      is_unique: !!i.is_unique,
+    })),
+  }));
 }
 
 async function loadStoredProcedures(versionId: number): Promise<ProcedureSnapshot[]> {
@@ -571,19 +584,34 @@ export async function getDictionaryByConnection(connectionId: number, versionPar
   if (!version) return { version: null, tables: [], procedures: [] };
 
   const tables = await knex('dictionary_tables').where({ version_id: version.id });
-  const tablesWithDetails = await Promise.all(
-    tables.map(async (table) => {
-      const columns = await knex('dictionary_columns')
-        .where({ table_id: table.id })
-        .orderBy('ordinal_position');
-      const indexes = await knex('dictionary_indexes').where({ table_id: table.id });
-      return {
-        ...table,
-        columns: columns.map((c: any) => ({ ...c, tags: JSON.parse(c.tags || '[]') })),
-        indexes: indexes.map((i: any) => ({ ...i, columns: JSON.parse(i.columns || '[]') })),
-      };
-    }),
-  );
+  const tableIds = tables.map((t: any) => t.id);
+
+  // Batch-load columns + indexes in 2 queries instead of 2N
+  let allColumns: any[] = [];
+  let allIndexes: any[] = [];
+  if (tableIds.length > 0) {
+    [allColumns, allIndexes] = await Promise.all([
+      knex('dictionary_columns').whereIn('table_id', tableIds).orderBy('ordinal_position'),
+      knex('dictionary_indexes').whereIn('table_id', tableIds),
+    ]);
+  }
+
+  const colsByTable = new Map<number, any[]>();
+  for (const c of allColumns) {
+    if (!colsByTable.has(c.table_id)) colsByTable.set(c.table_id, []);
+    colsByTable.get(c.table_id)!.push(c);
+  }
+  const idxsByTable = new Map<number, any[]>();
+  for (const i of allIndexes) {
+    if (!idxsByTable.has(i.table_id)) idxsByTable.set(i.table_id, []);
+    idxsByTable.get(i.table_id)!.push(i);
+  }
+
+  const tablesWithDetails = tables.map((table: any) => ({
+    ...table,
+    columns: (colsByTable.get(table.id) || []).map((c: any) => ({ ...c, tags: JSON.parse(c.tags || '[]') })),
+    indexes: (idxsByTable.get(table.id) || []).map((i: any) => ({ ...i, columns: JSON.parse(i.columns || '[]') })),
+  }));
 
   const procedures = await knex('dictionary_procedures')
     .where({ version_id: version.id })

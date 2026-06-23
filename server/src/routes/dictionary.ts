@@ -94,30 +94,39 @@ dictionaryRouter.get(
         .where({ version_id: version.id })
         .orderBy('table_name', 'asc');
 
-      const tablesWithDetails = await Promise.all(
-        tables.map(async (table: any) => {
-          const [columns, indexes] = await Promise.all([
-            knex('dictionary_columns')
-              .where({ table_id: table.id })
-              .orderBy('ordinal_position', 'asc'),
-            knex('dictionary_indexes')
-              .where({ table_id: table.id })
-              .orderBy('index_name', 'asc'),
-          ]);
+      // Batch-load all columns and indexes for this version in 2 queries instead of 2N
+      const tableIds = tables.map((t: any) => t.id);
+      let allColumns: any[] = [];
+      let allIndexes: any[] = [];
+      if (tableIds.length > 0) {
+        [allColumns, allIndexes] = await Promise.all([
+          knex('dictionary_columns').whereIn('table_id', tableIds).orderBy('ordinal_position', 'asc'),
+          knex('dictionary_indexes').whereIn('table_id', tableIds).orderBy('index_name', 'asc'),
+        ]);
+      }
 
-          return {
-            ...table,
-            columns: columns.map((c: any) => ({
-              ...c,
-              tags: JSON.parse(c.tags || '[]'),
-            })),
-            indexes: indexes.map((i: any) => ({
-              ...i,
-              columns: JSON.parse(i.columns || '[]'),
-            })),
-          };
-        }),
-      );
+      const columnsByTable = new Map<number, any[]>();
+      for (const col of allColumns) {
+        if (!columnsByTable.has(col.table_id)) columnsByTable.set(col.table_id, []);
+        columnsByTable.get(col.table_id)!.push(col);
+      }
+      const indexesByTable = new Map<number, any[]>();
+      for (const idx of allIndexes) {
+        if (!indexesByTable.has(idx.table_id)) indexesByTable.set(idx.table_id, []);
+        indexesByTable.get(idx.table_id)!.push(idx);
+      }
+
+      const tablesWithDetails = tables.map((table: any) => ({
+        ...table,
+        columns: (columnsByTable.get(table.id) || []).map((c: any) => ({
+          ...c,
+          tags: JSON.parse(c.tags || '[]'),
+        })),
+        indexes: (indexesByTable.get(table.id) || []).map((i: any) => ({
+          ...i,
+          columns: JSON.parse(i.columns || '[]'),
+        })),
+      }));
 
       const procedures = await knex('dictionary_procedures')
         .where({ version_id: version.id })

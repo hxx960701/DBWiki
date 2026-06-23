@@ -9,6 +9,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   DatabaseOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { Outlet, useNavigate, useLocation, useParams } from 'react-router-dom';
@@ -62,6 +63,9 @@ const MainLayout: React.FC = () => {
   }
   if (hasPermission('role:manage')) {
     adminChildren.push({ key: '/admin/roles', icon: <SafetyOutlined />, label: '角色管理' });
+  }
+  if (hasPermission('user:manage')) {
+    adminChildren.push({ key: '/admin/system', icon: <ToolOutlined />, label: '系统管理' });
   }
   const menuItems: MenuProps['items'] = [
     {
@@ -133,6 +137,7 @@ const MainLayout: React.FC = () => {
     } else if (segments[0] === 'admin') {
       if (segments[1] === 'users') items.push({ title: '用户管理' });
       else if (segments[1] === 'roles') items.push({ title: '角色管理' });
+      else if (segments[1] === 'system') items.push({ title: '系统管理' });
     } else if (segments[0] === 'profile') {
       items.push({ title: '个人设置' });
     }
