@@ -17,7 +17,7 @@ const RoleManagement: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm] = Form.useForm();
-  const [members, setMembers] = useState<Array<{ id: number; username: string; email: string }>>([]);
+  const [members, setMembers] = useState<Array<{ id: number; username: string; display_name?: string; email: string }>>([]);
   const [editingPermissions, setEditingPermissions] = useState<string[]>([]);
   const [editingDescription, setEditingDescription] = useState<string>('');
 
@@ -226,7 +226,9 @@ const RoleManagement: React.FC = () => {
                 pagination={false}
                 columns={[
                   { title: '用户名', dataIndex: 'username' },
-                  { title: '邮箱', dataIndex: 'email' },
+                  { title: '用户名称', key: 'display_name',
+                    render: (_: any, r: any) => r.display_name || '-',
+                  },
                 ]}
               />
             </Card>

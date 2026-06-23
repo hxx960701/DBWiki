@@ -186,6 +186,7 @@ projectsRouter.get('/:id', async (req: Request, res: Response, next: NextFunctio
         'pm.role',
         'pm.created_at',
         'u.username',
+        'u.display_name',
         'u.email',
         'r.name as role_name',
       );

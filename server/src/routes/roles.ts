@@ -153,7 +153,7 @@ rolesRouter.get(
       const users = await knex('user_roles as ur')
         .join('users as u', 'u.id', 'ur.user_id')
         .where('ur.role_id', id)
-        .select('u.id', 'u.username', 'u.email');
+        .select('u.id', 'u.username', 'u.display_name', 'u.email');
       res.json(users);
     } catch (error) {
       next(error);

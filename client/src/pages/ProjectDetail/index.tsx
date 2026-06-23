@@ -437,7 +437,7 @@ const ProjectDetail: React.FC = () => {
 
   const memberColumns = [
     { title: '用户名', dataIndex: 'username', key: 'username' },
-    { title: '邮箱', dataIndex: 'email', key: 'email' },
+    { title: '用户名称', dataIndex: 'display_name', key: 'display_name', render: (v: string) => v || '-' },
     {
       title: '项目角色', key: 'role',
       render: (_: any, record: any) => (
@@ -715,7 +715,7 @@ const ProjectDetail: React.FC = () => {
               notFoundContent={userSearchLoading ? '搜索中...' : '暂无数据'}
               options={userOptions.map((u) => ({
                 value: u.id,
-                label: `${u.username} (${u.email})`,
+                label: `${u.display_name || u.username}${u.email ? ` (${u.email})` : ''}`,
               }))}
             />
           </Form.Item>
