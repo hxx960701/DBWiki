@@ -13,70 +13,86 @@ interface MysqlConfig {
   password: string;
 }
 
+/** Tables and their per-batch row limit (lower for tables with large text columns). */
+const MIGRATION_TABLES: Array<{ name: string; batchSize: number }> = [
+  { name: 'users', batchSize: 500 },
+  { name: 'projects', batchSize: 500 },
+  { name: 'project_members', batchSize: 500 },
+  { name: 'database_connections', batchSize: 500 },
+  { name: 'permissions', batchSize: 500 },
+  { name: 'roles', batchSize: 500 },
+  { name: 'role_permissions', batchSize: 500 },
+  { name: 'user_roles', batchSize: 500 },
+  { name: 'project_role_bindings', batchSize: 500 },
+  { name: 'dictionary_versions', batchSize: 50 },
+  { name: 'dictionary_tables', batchSize: 100 },
+  { name: 'dictionary_columns', batchSize: 100 },
+  { name: 'dictionary_indexes', batchSize: 100 },
+  { name: 'dictionary_publish_logs', batchSize: 100 },
+  { name: 'dictionary_procedures', batchSize: 30 },  // definition can be very large
+];
+
 /**
  * Migrate all data from the active SQLite database to the target MySQL database.
- * Steps:
- *  1. Connect to MySQL, run knex migrations to create schema
- *  2. Read each table from SQLite, batch-insert into MySQL
- *  3. Update config to switch to MySQL
+ *
+ * Safety: if any step fails, all MySQL tables created by this migration are
+ * dropped so the target database is left in a clean state.
  */
 export async function migrateData(mysqlConfig: MysqlConfig): Promise<void> {
-  const mysql = await import('mysql2/promise');
-  const conn = await mysql.createConnection({
-    host: mysqlConfig.host,
-    port: mysqlConfig.port,
-    user: mysqlConfig.user,
-    password: mysqlConfig.password,
-    database: mysqlConfig.database,
-    multipleStatements: true,
-    connectTimeout: 15000,
+  const Knex = (await import('knex')).default;
+  const inProduction = __dirname.includes(`${path.sep}dist${path.sep}`);
+  const loadExtensions = inProduction ? ['.js'] : ['.js', '.ts'];
+
+  const mysqlKnex = Knex({
+    client: 'mysql2',
+    connection: {
+      host: mysqlConfig.host,
+      port: mysqlConfig.port,
+      user: mysqlConfig.user,
+      password: mysqlConfig.password,
+      database: mysqlConfig.database,
+    },
+    migrations: {
+      directory: path.join(__dirname, '../database/migrations'),
+      loadExtensions,
+    },
   });
 
   try {
-    // Import and create knex instance for MySQL
-    const Knex = (await import('knex')).default;
-    const inProduction = __dirname.includes(`${path.sep}dist${path.sep}`);
-    const loadExtensions = inProduction ? ['.js'] : ['.js', '.ts'];
-    const mysqlKnex = Knex({
-      client: 'mysql2',
-      connection: {
-        host: mysqlConfig.host,
-        port: mysqlConfig.port,
-        user: mysqlConfig.user,
-        password: mysqlConfig.password,
-        database: mysqlConfig.database,
-      },
-      migrations: {
-        directory: path.join(__dirname, '../database/migrations'),
-        loadExtensions,
-      },
-    });
+    // 1. Run migrations on MySQL to create tables
+    await mysqlKnex.migrate.latest();
 
-    try {
-      // Run migrations on MySQL to create tables
-      await mysqlKnex.migrate.latest();
+    // 2. Copy data table by table
+    for (const { name, batchSize } of MIGRATION_TABLES) {
+      const rows = await knex(name).select('*');
+      if (rows.length === 0) continue;
 
-      // Get list of all user tables (SQLite)
-      const tables = ['users', 'projects', 'project_members', 'database_connections',
-        'dictionary_versions', 'dictionary_tables', 'dictionary_columns',
-        'dictionary_indexes', 'dictionary_publish_logs', 'dictionary_procedures',
-        'user_roles', 'role_permissions', 'permissions', 'roles', 'project_role_bindings'];
-
-      for (const table of tables) {
-        const rows = await knex(table).select('*');
-        if (rows.length === 0) continue;
-
-        // Batch insert in chunks of 500
-        for (let i = 0; i < rows.length; i += 500) {
-          const chunk = rows.slice(i, i + 500);
-          await mysqlKnex(table).insert(chunk);
-        }
-        console.log(`[migrate] ${table}: ${rows.length} rows`);
+      for (let i = 0; i < rows.length; i += batchSize) {
+        const chunk = rows.slice(i, i + batchSize);
+        await mysqlKnex(name).insert(chunk);
       }
-    } finally {
-      await mysqlKnex.destroy();
+      console.log(`[migrate] ${name}: ${rows.length} rows`);
     }
+  } catch (err) {
+    // Migration failed — drop ALL user tables + knex management tables to leave
+    // the target database clean for a retry. This prevents data inconsistency.
+    console.error('[migrate] Failed, rolling back MySQL tables...', err);
+    try {
+      const allTables = [
+        ...MIGRATION_TABLES.map((t) => t.name),
+        'knex_migrations',
+        'knex_migrations_lock',
+      ];
+      // Drop in reverse order to respect FK constraints
+      for (const name of allTables.reverse()) {
+        await mysqlKnex.schema.dropTableIfExists(name);
+      }
+      console.log('[migrate] Rollback complete — all MySQL tables dropped');
+    } catch (rollbackErr) {
+      console.error('[migrate] Rollback also failed:', rollbackErr);
+    }
+    throw err;
   } finally {
-    await conn.end();
+    await mysqlKnex.destroy();
   }
 }
