@@ -272,7 +272,7 @@ const DictionaryBrowser: React.FC = () => {
   const loadDrafts = async () => {
     setDraftsLoading(true);
     try {
-      const data = await dictionaryApi.getDrafts();
+      const data = await dictionaryApi.getDrafts(connectionId);
       setDrafts(Array.isArray(data) ? data : []);
     } catch {
       message.error('加载草稿失败');

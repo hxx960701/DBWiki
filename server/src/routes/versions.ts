@@ -196,7 +196,9 @@ versionsRouter.get('/compare', async (req: Request, res: Response, next: NextFun
 versionsRouter.get('/drafts', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.userId;
-    const drafts = await knex('dictionary_versions as v')
+    const connectionId = req.query.connectionId ? parseInt(req.query.connectionId as string, 10) : undefined;
+
+    const query = knex('dictionary_versions as v')
       .join('database_connections as dc', 'dc.id', 'v.connection_id')
       .select(
         'v.id',
@@ -208,8 +210,13 @@ versionsRouter.get('/drafts', async (req: Request, res: Response, next: NextFunc
         'v.notes',
         'dc.database_name as connection_name',
       )
-      .where({ 'v.status': 'draft', 'v.created_by': userId })
-      .orderBy('v.created_at', 'desc');
+      .where({ 'v.status': 'draft', 'v.created_by': userId });
+
+    if (connectionId) {
+      query.andWhere('v.connection_id', connectionId);
+    }
+
+    const drafts = await query.orderBy('v.created_at', 'desc');
     res.json(drafts);
   } catch (error) {
     next(error);
