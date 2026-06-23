@@ -16,7 +16,7 @@ export async function up(knex: Knex) {
     table.string('procedure_type', 20).defaultTo('PROCEDURE'); // 'PROCEDURE' | 'FUNCTION'
     table.string('return_type', 200).defaultTo('');
     table.text('parameters').defaultTo('[]');                  // JSON [{name,type,mode,default}]
-    table.specificType('definition', 'MEDIUMTEXT').defaultTo('');          // full DDL / source
+    table.specificType('definition', 'MEDIUMTEXT');                          // full DDL / source
     table.text('procedure_comment').defaultTo('');
     table.text('custom_comment').defaultTo('');
     table.string('last_modified', 50).defaultTo('');
