@@ -60,7 +60,7 @@ export async function migrateData(mysqlConfig: MysqlConfig): Promise<void> {
       const tables = ['users', 'projects', 'project_members', 'database_connections',
         'dictionary_versions', 'dictionary_tables', 'dictionary_columns',
         'dictionary_indexes', 'dictionary_publish_logs', 'dictionary_procedures',
-        'user_roles', 'role_permissions', 'permissions', 'roles'];
+        'user_roles', 'role_permissions', 'permissions', 'roles', 'project_role_bindings'];
 
       for (const table of tables) {
         const rows = await knex(table).select('*');
