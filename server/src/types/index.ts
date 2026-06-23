@@ -2,6 +2,7 @@
 export interface User {
   id: number;
   username: string;
+  display_name: string;
   email: string;
   password_hash: string;
   role: 'admin' | 'editor' | 'viewer';

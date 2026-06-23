@@ -22,8 +22,9 @@ const resetPasswordSchema = z.object({
 
 const createUserSchema = z.object({
   username: z.string().min(3),
-  email: z.string().email(),
+  email: z.string().email().optional(),
   password: z.string().min(6),
+  display_name: z.string().max(100).optional(),
   role: z.enum(['admin', 'editor', 'viewer']).optional().default('viewer'),
   // Optional: list of role IDs or role names to grant globally on creation.
   role_ids: z.array(z.number().int().positive()).optional(),
@@ -71,7 +72,9 @@ adminRouter.get(
       const baseQuery = knex('users as u');
       if (search) {
         baseQuery.where(function () {
-          this.whereLike('u.username', `%${search}%`).orWhereLike('u.email', `%${search}%`);
+          this.whereLike('u.username', `%${search}%`)
+            .orWhereLike('u.display_name', `%${search}%`)
+            .orWhereLike('u.email', `%${search}%`);
         });
       }
 
@@ -83,6 +86,7 @@ adminRouter.get(
         .select(
           'u.id',
           'u.username',
+          'u.display_name',
           'u.email',
           'u.role',
           'u.created_at',
@@ -134,11 +138,13 @@ adminRouter.get(
         ? parseInt(req.query.excludeProjectId as string, 10)
         : undefined;
 
-      const query = knex('users as u').select('u.id', 'u.username', 'u.email', 'u.role').limit(50);
+      const query = knex('users as u').select('u.id', 'u.username', 'u.display_name', 'u.email', 'u.role').limit(50);
 
       if (q) {
         query.where(function () {
-          this.whereLike('u.username', `%${q}%`).orWhereLike('u.email', `%${q}%`);
+          this.whereLike('u.username', `%${q}%`)
+            .orWhereLike('u.display_name', `%${q}%`)
+            .orWhereLike('u.email', `%${q}%`);
         });
       }
 
@@ -193,11 +199,14 @@ adminRouter.post(
   validate(createUserSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { username, email, password, role, role_ids, role_names } = req.body;
+      const { username, email, password, role, display_name, role_ids, role_names } = req.body;
+
+      // Email is optional; generate a unique placeholder if not provided.
+      const resolvedEmail = email || `${username}@local`;
 
       const existing = await knex('users')
         .where({ username })
-        .orWhere({ email })
+        .orWhere({ email: resolvedEmail })
         .first();
       if (existing) {
         throw new AppError('Username or email already exists', 409);
@@ -206,7 +215,8 @@ adminRouter.post(
       const password_hash = await bcrypt.hash(password, 10);
       const [userId] = await knex('users').insert({
         username,
-        email,
+        email: resolvedEmail,
+        display_name: display_name || '',
         password_hash,
         role,
       });
@@ -225,7 +235,7 @@ adminRouter.post(
       });
 
       const created = await knex('users')
-        .select('id', 'username', 'email', 'role', 'created_at', 'updated_at')
+        .select('id', 'username', 'display_name', 'email', 'role', 'created_at', 'updated_at')
         .where({ id: userId })
         .first();
       res.status(201).json(created);
@@ -259,7 +269,7 @@ adminRouter.put(
         .update({ role, updated_at: knex.fn.now() });
 
       const updated = await knex('users')
-        .select('id', 'username', 'email', 'role', 'created_at', 'updated_at')
+        .select('id', 'username', 'display_name', 'email', 'role', 'created_at', 'updated_at')
         .where({ id: userId })
         .first();
 

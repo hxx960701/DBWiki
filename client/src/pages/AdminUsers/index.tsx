@@ -14,7 +14,7 @@ const { Title, Text } = Typography;
 interface UserRow {
   id: number;
   username: string;
-  email: string;
+  display_name: string;
   role: string;
   project_count?: number;
   created_at: string;
@@ -102,7 +102,7 @@ const AdminUsers: React.FC = () => {
       const values = await createForm.validateFields();
       await adminApi.createUser({
         username: values.username,
-        email: values.email,
+        display_name: values.display_name || '',
         password: values.password,
         role: values.role,
         role_ids: values.role_ids || [],
@@ -137,7 +137,7 @@ const AdminUsers: React.FC = () => {
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '用户名', dataIndex: 'username', key: 'username' },
-    { title: '邮箱', dataIndex: 'email', key: 'email' },
+    { title: '用户名称', dataIndex: 'display_name', key: 'display_name', render: (v: string) => v || '-' },
     {
       title: '类型',
       key: 'role',
@@ -224,7 +224,7 @@ const AdminUsers: React.FC = () => {
         </div>
         <Space>
           <Input.Search
-            placeholder="搜索用户名 / 邮箱..."
+            placeholder="搜索用户名 / 用户名称..."
             allowClear
             onSearch={(v) => {
               setSearch(v);
@@ -296,14 +296,11 @@ const AdminUsers: React.FC = () => {
             <Input placeholder="3 位以上的用户名" />
           </Form.Item>
           <Form.Item
-            name="email"
-            label="邮箱"
-            rules={[
-              { required: true, message: '请输入邮箱' },
-              { type: 'email', message: '邮箱格式不正确' },
-            ]}
+            name="display_name"
+            label="用户名称"
+            rules={[{ required: true, message: '请输入用户名称' }]}
           >
-            <Input placeholder="user@example.com" />
+            <Input placeholder="显示名称（如：张三）" />
           </Form.Item>
           <Form.Item
             name="password"

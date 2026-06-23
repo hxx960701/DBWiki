@@ -7,7 +7,8 @@ export const adminApi = {
     client.get('/admin/users/search', { params }).then((r) => r.data),
   createUser: (data: {
     username: string;
-    email: string;
+    email?: string;
+    display_name?: string;
     password: string;
     role?: string;
     role_names?: string[];

@@ -48,8 +48,8 @@ const Profile: React.FC = () => {
               <div style={{ fontSize: 16, fontWeight: 500 }}>{user?.username}</div>
             </div>
             <div>
-              <Text type="secondary">邮箱</Text>
-              <div style={{ fontSize: 16, fontWeight: 500 }}>{user?.email}</div>
+              <Text type="secondary">用户名称</Text>
+              <div style={{ fontSize: 16, fontWeight: 500 }}>{user?.display_name || user?.username}</div>
             </div>
             <div>
               <Text type="secondary">角色</Text>
