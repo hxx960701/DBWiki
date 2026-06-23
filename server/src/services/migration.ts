@@ -19,9 +19,6 @@ const MIGRATION_TABLES: Array<{ name: string; batchSize: number }> = [
   { name: 'projects', batchSize: 500 },
   { name: 'project_members', batchSize: 500 },
   { name: 'database_connections', batchSize: 500 },
-  { name: 'permissions', batchSize: 500 },
-  { name: 'roles', batchSize: 500 },
-  { name: 'role_permissions', batchSize: 500 },
   { name: 'user_roles', batchSize: 500 },
   { name: 'project_role_bindings', batchSize: 500 },
   { name: 'dictionary_versions', batchSize: 50 },
@@ -78,10 +75,13 @@ export async function migrateData(mysqlConfig: MysqlConfig): Promise<void> {
     // the target database clean for a retry. This prevents data inconsistency.
     console.error('[migrate] Failed, rolling back MySQL tables...', err);
     try {
+      // All tables that may exist in MySQL (data-copied + migration-seeded)
       const allTables = [
-        ...MIGRATION_TABLES.map((t) => t.name),
-        'knex_migrations',
-        'knex_migrations_lock',
+        'project_role_bindings', 'user_roles', 'role_permissions', 'roles', 'permissions',
+        'dictionary_procedures', 'dictionary_publish_logs', 'dictionary_indexes',
+        'dictionary_columns', 'dictionary_tables', 'dictionary_versions',
+        'database_connections', 'project_members', 'projects', 'users',
+        'knex_migrations', 'knex_migrations_lock',
       ];
       // Drop in reverse order to respect FK constraints
       for (const name of allTables.reverse()) {
