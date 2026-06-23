@@ -116,6 +116,23 @@ async function loadAuthorizedConnection(req: Request, requiredPerm: string): Pro
   return connection;
 }
 
+// GET /connections/:id/info — lightweight connection + project name for breadcrumbs
+connectionActionsRouter.get(
+  '/:id/info',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const connection = await loadAuthorizedConnection(req, 'dictionary:read');
+      const project = await knex('projects').where({ id: connection.project_id }).select('name').first();
+      res.json({
+        connection_name: connection.name,
+        project_name: (project as any)?.name || '',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 // POST /connections/:id/preview - test an existing saved connection
 connectionActionsRouter.post(
   '/:id/preview',

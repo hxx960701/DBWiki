@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layout, Menu, Dropdown, Space, theme, Breadcrumb, Avatar, Tag, Typography } from 'antd';
 import {
   AppstoreOutlined,
@@ -13,6 +13,8 @@ import {
 import type { MenuProps } from 'antd';
 import { Outlet, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
+import { connectionsApi } from '../../api/connections';
+import { projectsApi } from '../../api/projects';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -24,6 +26,34 @@ const MainLayout: React.FC = () => {
   const params = useParams();
   const { user, logout, hasPermission } = useAuthStore();
   const { token: { colorBgContainer, borderRadiusLG } } = theme.useToken();
+
+  // Breadcrumb info loaded async for connection/project pages
+  const [connectionInfo, setConnectionInfo] = useState<{ connection_name: string; project_name: string } | null>(null);
+  const [projectName, setProjectName] = useState<string>('');
+
+  useEffect(() => {
+    const segs = location.pathname.split('/').filter(Boolean);
+
+    // Connection pages
+    if (segs[0] === 'connections' && segs[1]) {
+      const id = parseInt(segs[1], 10);
+      if (!isNaN(id)) {
+        connectionsApi.getInfo(id).then(setConnectionInfo).catch(() => setConnectionInfo(null));
+      }
+      return () => setConnectionInfo(null);
+    }
+    setConnectionInfo(null);
+
+    // Project pages
+    if (segs[0] === 'projects' && segs[1]) {
+      const id = parseInt(segs[1], 10);
+      if (!isNaN(id)) {
+        projectsApi.get(id).then((p) => setProjectName(p.name || '')).catch(() => setProjectName(''));
+      }
+      return () => setProjectName('');
+    }
+    setProjectName('');
+  }, [location.pathname]);
 
   // Build menu groups: workspace + admin (admin only shows when permitted).
   const adminChildren: NonNullable<MenuProps['items']> = [];
@@ -89,11 +119,17 @@ const MainLayout: React.FC = () => {
     if (segments[0] === 'dashboard') items[0] = { title: '项目总览' };
     else if (segments[0] === 'projects') {
       items.push({ title: '项目总览', href: '/dashboard' });
-      items.push({ title: `项目 #${params.id || segments[1]}` });
+      items.push({ title: projectName || `项目 #${params.id || segments[1]}` });
     } else if (segments[0] === 'connections') {
       items.push({ title: '项目总览', href: '/dashboard' });
-      if (segments[2] === 'dictionary') items.push({ title: '数据字典' });
-      else if (segments[2] === 'versions') items.push({ title: '版本历史' });
+      if (segments[2] === 'dictionary') {
+        if (connectionInfo) {
+          items.push({ title: connectionInfo.project_name || '项目' });
+          items.push({ title: connectionInfo.connection_name });
+        } else {
+          items.push({ title: '数据字典' });
+        }
+      } else if (segments[2] === 'versions') items.push({ title: '版本历史' });
     } else if (segments[0] === 'admin') {
       if (segments[1] === 'users') items.push({ title: '用户管理' });
       else if (segments[1] === 'roles') items.push({ title: '角色管理' });

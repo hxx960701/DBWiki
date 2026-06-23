@@ -37,6 +37,8 @@ interface SyncDiff {
 interface DictionaryState {
   versions: DictionaryVersion[];
   currentVersion: DictionaryVersion | null;
+  connectionName: string;
+  projectName: string;
   tables: TableWithDetails[];
   procedures: DictionaryProcedure[];
   selectedTableId: number | null;
@@ -75,6 +77,8 @@ interface DictionaryState {
 export const useDictionaryStore = create<DictionaryState>((set, get) => ({
   versions: [],
   currentVersion: null,
+  connectionName: '',
+  projectName: '',
   tables: [],
   procedures: [],
   selectedTableId: null,
@@ -99,6 +103,8 @@ export const useDictionaryStore = create<DictionaryState>((set, get) => ({
       const result = await dictionaryApi.getDictionary(connectionId, version);
       set({
         currentVersion: result.version,
+        connectionName: result.connection_name || '',
+        projectName: result.project_name || '',
         tables: result.tables || [],
         procedures: result.procedures || [],
         loading: false,

@@ -34,6 +34,7 @@ const DictionaryBrowser: React.FC = () => {
 
   const {
     versions, tables, procedures, currentVersion,
+    connectionName, projectName,
     selectedTableId, selectedProcedureId, syncing,
     pendingTableChanges, pendingColumnChanges, pendingProcedureChanges,
     syncDiff, syncDiffLoading,
@@ -825,7 +826,7 @@ const DictionaryBrowser: React.FC = () => {
           <Space>
             <Button icon={<ArrowLeftOutlined />} onClick={() => guardedNavigate(-1)}>返回</Button>
             <Title level={5} style={{ margin: 0 }}>
-              <TableOutlined /> 数据字典
+              <TableOutlined /> {projectName}{projectName && connectionName ? ' / ' : ''}{connectionName}
             </Title>
             <Text type="secondary">
               共 {tables.length} 张表 / {procedures.length} 个存储过程

@@ -15,6 +15,10 @@ export const connectionsApi = {
     client.post<{ success: boolean; message: string; latency_ms: number }>(
       `/connections/${id}/preview`,
     ).then((r) => r.data),
+  getInfo: (id: number) =>
+    client.get<{ connection_name: string; project_name: string }>(
+      `/connections/${id}/info`,
+    ).then((r) => r.data),
   test: (data: {
     db_type: string;
     host: string;

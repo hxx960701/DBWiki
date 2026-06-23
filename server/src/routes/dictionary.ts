@@ -123,8 +123,11 @@ dictionaryRouter.get(
         .where({ version_id: version.id })
         .orderBy('procedure_name', 'asc');
 
+      const project = await knex('projects').where({ id: connection.project_id }).select('name').first();
+
       res.json({
         connection_id: connectionId,
+        project_name: (project as any)?.name || '',
         version,
         tables: tablesWithDetails,
         procedures: procedures.map((p: any) => ({
