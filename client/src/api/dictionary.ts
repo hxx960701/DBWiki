@@ -7,11 +7,14 @@ export const dictionaryApi = {
     client.patch(`/dictionary/tables/${tableId}`, data).then((r) => r.data),
   updateColumn: (columnId: number, data: { custom_comment?: string; display_name?: string; tags?: string[] }) =>
     client.patch(`/dictionary/columns/${columnId}`, data).then((r) => r.data),
+  updateProcedure: (procedureId: number, data: { custom_comment?: string }) =>
+    client.patch(`/dictionary/procedures/${procedureId}`, data).then((r) => r.data),
   saveBatch: (data: {
     connection_id: number;
     version_id?: number;
     table_changes?: Array<{ id: number; custom_comment?: string }>;
     column_changes?: Array<{ id: number; custom_comment?: string; display_name?: string; tags?: string[] }>;
+    procedure_changes?: Array<{ id: number; custom_comment?: string }>;
   }) => client.post('/dictionary/save', data).then((r) => r.data),
   getVersions: (connectionId: number) =>
     client.get(`/dictionary/versions/${connectionId}`).then((r) => r.data),

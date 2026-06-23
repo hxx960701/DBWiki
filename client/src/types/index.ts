@@ -124,6 +124,28 @@ export interface DictionaryIndex {
   is_unique: number;
 }
 
+export interface DictionaryProcedureParam {
+  name: string;
+  type: string;
+  mode: string;
+  default: string | null;
+}
+
+export interface DictionaryProcedure {
+  id: number;
+  version_id: number;
+  procedure_name: string;
+  procedure_type: string;
+  return_type: string;
+  parameters: DictionaryProcedureParam[];
+  definition: string;
+  procedure_comment: string;
+  custom_comment: string;
+  last_modified: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AuthResponse {
   token: string;
   user: User;

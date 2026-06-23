@@ -91,6 +91,21 @@ export interface DictionaryIndex {
   is_unique: number;
 }
 
+export interface DictionaryProcedure {
+  id: number;
+  version_id: number;
+  procedure_name: string;
+  procedure_type: string;   // 'PROCEDURE' | 'FUNCTION'
+  return_type: string;
+  parameters: string;        // JSON-encoded array
+  definition: string;
+  procedure_comment: string;
+  custom_comment: string;
+  last_modified: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // API types
 export interface JwtPayload {
   userId: number;

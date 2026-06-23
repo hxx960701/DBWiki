@@ -48,8 +48,10 @@ export async function exportToHTML(connectionId: number, versionParam?: string |
       ...t,
       columnCount: t.columns?.length || 0,
     })),
+    procedures: dict.procedures || [],
     tableCount: dict.tables.length,
     columnCount: dict.tables.reduce((acc, t) => acc + (t.columns?.length || 0), 0),
+    procedureCount: (dict.procedures || []).length,
   });
 }
 
@@ -75,6 +77,7 @@ export async function exportToExcel(connectionId: number, versionParam?: string 
     { field: 'Status', value: dict.version.status },
     { field: 'Tables', value: dict.tables.length },
     { field: 'Columns', value: dict.tables.reduce((a: number, t: any) => a + (t.columns?.length || 0), 0) },
+    { field: 'Procedures', value: (dict.procedures || []).length },
     { field: 'Generated', value: new Date().toISOString() },
   ];
   summaryData.forEach(r => summary.addRow(r));
@@ -137,6 +140,42 @@ export async function exportToExcel(connectionId: number, versionParam?: string 
   }
   allCols.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
   allCols.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+
+  // Procedures sheet (only if any exist)
+  const procedures = dict.procedures || [];
+  if (procedures.length > 0) {
+    const procSheet = workbook.addWorksheet('Procedures');
+    procSheet.columns = [
+      { header: '#', key: 'num', width: 5 },
+      { header: 'Name', key: 'name', width: 40 },
+      { header: 'Type', key: 'type', width: 12 },
+      { header: 'Return Type', key: 'returnType', width: 20 },
+      { header: 'Parameters', key: 'params', width: 60 },
+      { header: 'DB Comment', key: 'dbComment', width: 40 },
+      { header: 'Custom Comment', key: 'customComment', width: 40 },
+      { header: 'Last Modified', key: 'lastModified', width: 20 },
+      { header: 'Definition', key: 'definition', width: 80 },
+    ];
+    procedures.forEach((p: any, i: number) => {
+      const paramSummary = (p.parameters || [])
+        .map((pr: any) => `${pr.mode || 'IN'} ${pr.name} ${pr.type}${pr.default ? ` DEFAULT ${pr.default}` : ''}`)
+        .join('; ');
+      procSheet.addRow({
+        num: i + 1,
+        name: p.procedure_name,
+        type: p.procedure_type,
+        returnType: p.return_type || '',
+        params: paramSummary,
+        dbComment: p.procedure_comment || '',
+        customComment: p.custom_comment || '',
+        lastModified: p.last_modified || '',
+        definition: p.definition || '',
+      });
+    });
+    procSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    procSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+    procSheet.getColumn('definition').alignment = { wrapText: true, vertical: 'top' };
+  }
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);

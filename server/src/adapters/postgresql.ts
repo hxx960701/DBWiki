@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo } from './types.js';
 
 export class PostgreSQLAdapter implements DatabaseAdapter {
   private pool: pg.Pool;
@@ -97,6 +97,78 @@ export class PostgreSQLAdapter implements DatabaseAdapter {
         indexType: typeMatch ? typeMatch[1] : 'BTREE',
         columns,
         isUnique,
+      };
+    });
+  }
+
+  async getProcedures(): Promise<ProcedureInfo[]> {
+    const result = await this.pool.query(
+      `SELECT
+         p.proname AS procedure_name,
+         p.prokind,
+         pg_catalog.pg_get_functiondef(p.oid) AS definition,
+         pg_catalog.pg_get_function_arguments(p.oid) AS args_def,
+         pg_catalog.pg_get_function_result(p.oid) AS return_type,
+         obj_description(p.oid, 'pg_proc') AS procedure_comment,
+         p.prorettype::regtype::text AS return_type_simple,
+         p.pronamespace::regnamespace::text AS schema_name
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = $1
+         AND p.prokind IN ('f','p')   -- f=function, p=procedure (PG 11+). 'a'=aggregate, 'w'=window
+         AND p.prorettype::regtype::text <> 'trigger'  -- skip triggers
+       ORDER BY p.proname`,
+      [this.schema],
+    );
+
+    return result.rows.map((r: any) => {
+      // Parse pg_get_function_arguments into structured params
+      const params: ProcedureParamInfo[] = [];
+      if (r.args_def) {
+        // Format: "arg1_name arg1_type, OUT arg2_name arg2_type, ..."
+        // or with defaults: "arg1_name arg1_type DEFAULT 'val'"
+        const parts = r.args_def.split(/\s*,\s*/);
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed) continue;
+          // Detect mode prefix
+          let mode = 'IN';
+          let rest = trimmed;
+          // Patterns: IN | OUT | INOUT | VARIADIC (case-insensitive)
+          const modeMatch = trimmed.match(/^(IN\s+OUT|OUT|IN|VARIADIC)\s+(.+)/i);
+          if (modeMatch) {
+            mode = modeMatch[1].toUpperCase();
+            rest = modeMatch[2];
+          }
+          // Split name and type (the type is everything after the first space, minus DEFAULT clause)
+          const defaultMatch = rest.match(/^(\S+)\s+(.+?)(?:\s+DEFAULT\s+(.+))?$/i);
+          if (defaultMatch) {
+            params.push({
+              name: defaultMatch[1],
+              type: defaultMatch[2],
+              mode,
+              default: defaultMatch[3] || null,
+            });
+          } else {
+            // Could be just a type (unlikely for named params, but handle edge case)
+            params.push({
+              name: rest,
+              type: '',
+              mode,
+              default: null,
+            });
+          }
+        }
+      }
+
+      return {
+        procedureName: r.procedure_name,
+        procedureType: r.prokind === 'p' ? 'PROCEDURE' : 'FUNCTION',
+        returnType: r.return_type || r.return_type_simple || '',
+        parameters: params,
+        definition: r.definition || '',
+        procedureComment: r.procedure_comment || '',
+        lastModified: '',
       };
     });
   }

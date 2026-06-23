@@ -250,6 +250,76 @@
       padding: 1px 5px; border-radius: 3px;
     }
 
+    /* ========== Procedures ========== */
+    .proc-section {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      margin-bottom: 24px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .proc-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .proc-header h3 {
+      font-size: 17px;
+      font-weight: 700;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    }
+    .badge-proc { background: #eef2ff; color: #4338ca; }
+    .badge-func { background: #ecfdf5; color: #047857; }
+    .proc-meta {
+      font-size: 12px;
+      color: var(--color-text-muted);
+      margin-left: 8px;
+    }
+    .proc-body { padding: 14px 24px; }
+    .proc-body h4 {
+      font-size: 12px; font-weight: 600; color: var(--color-text-muted);
+      text-transform: uppercase; letter-spacing: .5px; margin: 12px 0 8px;
+    }
+    .proc-definition {
+      background: #f8fafc;
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      padding: 12px 14px;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      max-height: 480px;
+      overflow: auto;
+    }
+    .proc-params {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .proc-params thead th {
+      background: #f8fafc;
+      padding: 6px 12px;
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--color-text-muted);
+      border-bottom: 1px solid var(--color-border);
+    }
+    .proc-params tbody td {
+      padding: 6px 12px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .mode-IN { background: #eff6ff; color: #2563eb; }
+    .mode-OUT { background: #fff7ed; color: #ea580c; }
+    .mode-INOUT { background: #f5f3ff; color: #7c3aed; }
+
     /* ========== Back to Top ========== */
     .back-top {
       display: inline-block;
@@ -316,6 +386,12 @@
         <div class="stat-value">{{columnCount}}</div>
         <div class="stat-label">Columns</div>
       </div>
+      {{#if procedureCount}}
+      <div class="stat-card">
+        <div class="stat-value">{{procedureCount}}</div>
+        <div class="stat-label">Procedures</div>
+      </div>
+      {{/if}}
       <div class="stat-card">
         <div class="stat-value">v{{version}}</div>
         <div class="stat-label">Version</div>
@@ -334,6 +410,18 @@
         </div>
         {{/each}}
       </div>
+      {{#if procedures}}
+      <h2 style="margin-top:14px;">Procedures</h2>
+      <div class="toc-grid">
+        {{#each procedures}}
+        <div class="toc-item">
+          <span class="toc-idx">{{inc @index}}</span>
+          <a href="#proc-{{@index}}">{{this.procedure_name}}</a>
+          <span class="toc-cols">{{this.procedure_type}}</span>
+        </div>
+        {{/each}}
+      </div>
+      {{/if}}
     </div>
 
     <!-- Table Sections -->
@@ -411,6 +499,66 @@
       {{/if}}
     </div>
     {{/each}}
+
+    {{#if procedures}}
+    <h2 style="font-size:18px;font-weight:700;margin:32px 0 16px;color:var(--color-text);">Stored Procedures &amp; Functions</h2>
+    {{#each procedures}}
+    <div class="proc-section" id="proc-{{@index}}">
+      <div class="proc-header">
+        <h3>{{this.procedure_name}}</h3>
+        {{#ifEqual this.procedure_type 'FUNCTION'}}
+        <span class="table-badge badge-func">FUNCTION</span>
+        {{else}}
+        <span class="table-badge badge-proc">PROCEDURE</span>
+        {{/ifEqual}}
+        {{#if this.return_type}}
+        <span class="proc-meta">returns <code>{{this.return_type}}</code></span>
+        {{/if}}
+        {{#if this.last_modified}}
+        <span class="proc-meta">modified {{this.last_modified}}</span>
+        {{/if}}
+        <a href="#toc" class="back-top">&uarr; Back to top</a>
+      </div>
+      <div class="proc-body">
+        {{#if this.procedure_comment}}
+        <div class="table-comment">{{this.procedure_comment}}</div>
+        {{/if}}
+        {{#if this.custom_comment}}
+        <div class="table-comment custom">{{this.custom_comment}}</div>
+        {{/if}}
+
+        {{#if this.parameters.length}}
+        <h4>Parameters ({{this.parameters.length}})</h4>
+        <table class="proc-params">
+          <thead>
+            <tr>
+              <th style="width:60px;">Mode</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{#each this.parameters}}
+            <tr>
+              <td><span class="key-badge mode-{{this.mode}}">{{this.mode}}</span></td>
+              <td class="col-name">{{this.name}}</td>
+              <td class="col-type">{{this.type}}</td>
+              <td class="col-default">{{#if this.default}}{{this.default}}{{else}}<span style="color:#cbd5e1;">—</span>{{/if}}</td>
+            </tr>
+            {{/each}}
+          </tbody>
+        </table>
+        {{/if}}
+
+        {{#if this.definition}}
+        <h4>Definition</h4>
+        <pre class="proc-definition">{{this.definition}}</pre>
+        {{/if}}
+      </div>
+    </div>
+    {{/each}}
+    {{/if}}
 
     <!-- Footer -->
     <div class="footer">

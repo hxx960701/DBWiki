@@ -1,4 +1,4 @@
-import type { ConnectionConfig, TableInfo, IndexInfo } from './types.js';
+import type { ConnectionConfig, TableInfo, IndexInfo, ProcedureInfo } from './types.js';
 import { MySQLAdapter } from './mysql.js';
 
 export class StarRocksAdapter extends MySQLAdapter {
@@ -43,5 +43,12 @@ export class StarRocksAdapter extends MySQLAdapter {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * StarRocks has no stored procedure concept.
+   */
+  async getProcedures(): Promise<ProcedureInfo[]> {
+    return [];
   }
 }

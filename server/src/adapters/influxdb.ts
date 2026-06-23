@@ -1,5 +1,5 @@
 import { InfluxDB, type QueryApi } from '@influxdata/influxdb-client';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo } from './types.js';
 
 export class InfluxDBAdapter implements DatabaseAdapter {
   private client: InfluxDB;
@@ -113,6 +113,10 @@ export class InfluxDBAdapter implements DatabaseAdapter {
   }
 
   async getIndexes(_tableName: string): Promise<IndexInfo[]> {
+    return [];
+  }
+
+  async getProcedures(): Promise<ProcedureInfo[]> {
     return [];
   }
 

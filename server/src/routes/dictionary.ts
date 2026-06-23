@@ -44,6 +44,15 @@ async function ensureColumnAccess(req: Request, columnId: number, requiredPerm: 
   return { column, version };
 }
 
+async function ensureProcedureAccess(req: Request, procedureId: number, requiredPerm: string) {
+  const procedure = await knex('dictionary_procedures').where({ id: procedureId }).first();
+  if (!procedure) throw new AppError('Procedure not found', 404);
+  const version = await knex('dictionary_versions').where({ id: procedure.version_id }).first();
+  if (!version) throw new AppError('Version not found', 404);
+  await ensureConnectionAccess(req, version.connection_id, requiredPerm);
+  return { procedure, version };
+}
+
 // ----- Read -----------------------------------------------------------------
 
 // GET /dictionary/connections/:id - get dictionary data for a connection
@@ -102,10 +111,18 @@ dictionaryRouter.get(
         }),
       );
 
+      const procedures = await knex('dictionary_procedures')
+        .where({ version_id: version.id })
+        .orderBy('procedure_name', 'asc');
+
       res.json({
         connection_id: connectionId,
         version,
         tables: tablesWithDetails,
+        procedures: procedures.map((p: any) => ({
+          ...p,
+          parameters: JSON.parse(p.parameters || '[]'),
+        })),
         connection_name: connection.name,
       });
     } catch (error) {
@@ -161,6 +178,28 @@ dictionaryRouter.patch('/columns/:id', async (req: Request, res: Response, next:
   }
 });
 
+dictionaryRouter.patch('/procedures/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const procedureId = parseInt(req.params.id as string, 10);
+    const { custom_comment } = req.body;
+    if (custom_comment === undefined) throw new AppError('custom_comment is required', 400);
+
+    const { version } = await ensureProcedureAccess(req, procedureId, 'dictionary:edit');
+    if (version.status === 'published') {
+      throw new AppError('Cannot edit a published version', 400);
+    }
+
+    await knex('dictionary_procedures')
+      .where({ id: procedureId })
+      .update({ custom_comment, updated_at: knex.fn.now() });
+
+    const updated = await knex('dictionary_procedures').where({ id: procedureId }).first();
+    res.json({ ...updated, parameters: JSON.parse(updated.parameters || '[]') });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ----- Batch save -----------------------------------------------------------
 
 const saveSchema = z.object({
@@ -177,6 +216,10 @@ const saveSchema = z.object({
     display_name: z.string().optional(),
     tags: z.array(z.string()).optional(),
   })).optional().default([]),
+  procedure_changes: z.array(z.object({
+    id: z.number().int().positive(),
+    custom_comment: z.string().optional(),
+  })).optional().default([]),
 });
 
 /**
@@ -185,17 +228,17 @@ const saveSchema = z.object({
  * Persist a batch of pending edits to the latest draft of a connection.
  *
  * If the latest version is `published`, the route forks a new draft
- * (next version_number, status='draft', cloned tables/columns/indexes)
+ * (next version_number, status='draft', cloned tables/columns/indexes/procedures)
  * and applies the edits to the fork. The edits' `id` values must be
- * column/table IDs from the version the user was viewing — we look them
- * up by table_name + column_name in the new draft.
+ * column/table/procedure IDs from the version the user was viewing — we look them
+ * up by name in the new draft.
  */
 dictionaryRouter.post(
   '/save',
   validate(saveSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { connection_id, version_id, table_changes, column_changes } = req.body;
+      const { connection_id, version_id, table_changes, column_changes, procedure_changes } = req.body;
       const userId = req.user!.userId;
 
       const connection = await ensureConnectionAccess(req, connection_id, 'dictionary:save');
@@ -216,21 +259,12 @@ dictionaryRouter.post(
       let targetVersion = workingVersion;
       let mappedTableChanges: Array<{ id: number; custom_comment?: string }> = table_changes;
       let mappedColumnChanges: Array<{ id: number; custom_comment?: string; display_name?: string; tags?: string[] }> = column_changes;
+      let mappedProcedureChanges: Array<{ id: number; custom_comment?: string }> = procedure_changes;
 
       if (workingVersion.status === 'published') {
-        // Fork: create a new draft cloned from the published version, then
-        // remap incoming change IDs (which point at the published version's
-        // rows) to the new draft's row IDs by name.
-        const tableNameById = new Map<number, string>();
-        const columnIdentifierById = new Map<number, { tableName: string; columnName: string }>();
-
         const sourceTables = await knex('dictionary_tables').where({ version_id: workingVersion.id });
-        for (const t of sourceTables) tableNameById.set(t.id, t.table_name);
         const sourceColumns = await knex('dictionary_columns').whereIn('table_id', sourceTables.map((t: any) => t.id));
-        for (const c of sourceColumns) {
-          const tn = sourceTables.find((t: any) => t.id === c.table_id)?.table_name;
-          if (tn) columnIdentifierById.set(c.id, { tableName: tn, columnName: c.column_name });
-        }
+        const sourceProcedures = await knex('dictionary_procedures').where({ version_id: workingVersion.id });
 
         const nextVersionNumber = workingVersion.version_number + 1;
         const newDraft = await knex.transaction(async (trx) => {
@@ -289,10 +323,28 @@ dictionaryRouter.post(
             });
           }
 
+          // Procedures
+          const procedureIdMap = new Map<number, number>();
+          for (const p of sourceProcedures) {
+            const [newId] = await trx('dictionary_procedures').insert({
+              version_id: versionId,
+              procedure_name: p.procedure_name,
+              procedure_type: p.procedure_type,
+              return_type: p.return_type,
+              parameters: p.parameters,
+              definition: p.definition,
+              procedure_comment: p.procedure_comment,
+              custom_comment: p.custom_comment,
+              last_modified: p.last_modified,
+            });
+            procedureIdMap.set(p.id, newId);
+          }
+
           return {
             version: await trx('dictionary_versions').where({ id: versionId }).first(),
             tableIdMap,
             columnIdMap,
+            procedureIdMap,
           };
         });
 
@@ -302,6 +354,9 @@ dictionaryRouter.post(
           .filter((c: any) => c.id > 0);
         mappedColumnChanges = column_changes
           .map((c: any) => ({ ...c, id: newDraft.columnIdMap.get(c.id) || 0 }))
+          .filter((c: any) => c.id > 0);
+        mappedProcedureChanges = procedure_changes
+          .map((c: any) => ({ ...c, id: newDraft.procedureIdMap.get(c.id) || 0 }))
           .filter((c: any) => c.id > 0);
       }
 
@@ -330,12 +385,23 @@ dictionaryRouter.post(
             }
           }
         }
+        for (const ch of mappedProcedureChanges) {
+          const update: Record<string, any> = { updated_at: trx.fn.now() };
+          if (ch.custom_comment !== undefined) update.custom_comment = ch.custom_comment;
+          if (Object.keys(update).length > 1) {
+            await trx('dictionary_procedures').where({ id: ch.id, version_id: targetVersion.id }).update(update);
+          }
+        }
       });
 
       const refreshed = await knex('dictionary_versions').where({ id: targetVersion.id }).first();
       res.json({
         version: refreshed,
-        applied: { tables: mappedTableChanges.length, columns: mappedColumnChanges.length },
+        applied: {
+          tables: mappedTableChanges.length,
+          columns: mappedColumnChanges.length,
+          procedures: mappedProcedureChanges.length,
+        },
       });
     } catch (error) {
       next(error);

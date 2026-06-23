@@ -1,5 +1,5 @@
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo } from './types.js';
 
 export class ClickHouseAdapter implements DatabaseAdapter {
   private client: ClickHouseClient;
@@ -105,6 +105,10 @@ export class ClickHouseAdapter implements DatabaseAdapter {
     } catch {
       return [];
     }
+  }
+
+  async getProcedures(): Promise<ProcedureInfo[]> {
+    return [];
   }
 
   async disconnect(): Promise<void> {

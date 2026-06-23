@@ -51,6 +51,19 @@ async function loadVersionFullSnapshot(versionId: number) {
   return out;
 }
 
+async function loadVersionProcedures(versionId: number) {
+  const rows = await knex('dictionary_procedures').where({ version_id: versionId });
+  return rows.map((r: any) => ({
+    procedure_name: r.procedure_name,
+    procedure_type: r.procedure_type || 'PROCEDURE',
+    return_type: r.return_type || '',
+    parameters: r.parameters || '[]',
+    definition: r.definition || '',
+    procedure_comment: r.procedure_comment || '',
+    custom_comment: r.custom_comment || '',
+  }));
+}
+
 // GET /dictionary/versions/compare?a=&b=
 versionsRouter.get('/compare', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -73,6 +86,8 @@ versionsRouter.get('/compare', async (req: Request, res: Response, next: NextFun
 
     const tablesA = await loadVersionFullSnapshot(versionA.id);
     const tablesB = await loadVersionFullSnapshot(versionB.id);
+    const proceduresA = await loadVersionProcedures(versionA.id);
+    const proceduresB = await loadVersionProcedures(versionB.id);
 
     const mapA = new Map(tablesA.map((t) => [t.table_name, t]));
     const mapB = new Map(tablesB.map((t) => [t.table_name, t]));
@@ -142,10 +157,35 @@ versionsRouter.get('/compare', async (req: Request, res: Response, next: NextFun
       }
     }
 
+    // --- Procedure diff ---
+    const procMapA = new Map(proceduresA.map((p: any) => [p.procedure_name, p]));
+    const procMapB = new Map(proceduresB.map((p: any) => [p.procedure_name, p]));
+    const procAdded: string[] = [];
+    const procRemoved: string[] = [];
+    const procChanged: Array<Record<string, any>> = [];
+
+    for (const name of procMapB.keys()) if (!procMapA.has(name)) procAdded.push(name);
+    for (const name of procMapA.keys()) if (!procMapB.has(name)) procRemoved.push(name);
+    for (const [name, pA] of procMapA.entries()) {
+      const pB = procMapB.get(name);
+      if (!pB) continue;
+      const fields: Record<string, { old: any; new: any }> = {};
+      const compareKeys = ['procedure_type', 'return_type', 'parameters', 'definition', 'procedure_comment', 'custom_comment'];
+      for (const key of compareKeys) {
+        if ((pA as any)[key] !== (pB as any)[key]) {
+          fields[key] = { old: (pA as any)[key], new: (pB as any)[key] };
+        }
+      }
+      if (Object.keys(fields).length > 0) {
+        procChanged.push({ procedure_name: name, fields });
+      }
+    }
+
     res.json({
       version_a: { id: versionA.id, version_number: versionA.version_number, status: versionA.status },
       version_b: { id: versionB.id, version_number: versionB.version_number, status: versionB.status },
       diff: { added, removed, changed },
+      procedures: { added: procAdded, removed: procRemoved, changed: procChanged },
     });
   } catch (error) {
     next(error);
@@ -268,6 +308,8 @@ versionsRouter.post('/:connectionId', async (req: Request, res: Response, next: 
             return { ...table, columns, indexes };
           }),
         );
+        // For simplicity, procedures are referenced via dictionary_procedures
+        // so we don't embed them in snapshot_data (they live in the separate table).
       }
     }
 
@@ -358,6 +400,7 @@ versionsRouter.delete('/:id', async (req: Request, res: Response, next: NextFunc
         await trx('dictionary_columns').whereIn('table_id', tableIds).del();
         await trx('dictionary_indexes').whereIn('table_id', tableIds).del();
       }
+      await trx('dictionary_procedures').where({ version_id: versionId }).del();
       await trx('dictionary_tables').where({ version_id: versionId }).del();
       await trx('dictionary_publish_logs').where({ version_id: versionId }).del();
       await trx('dictionary_versions').where({ id: versionId }).del();
@@ -391,6 +434,7 @@ versionsRouter.post('/:id/rollback', async (req: Request, res: Response, next: N
     const sourceTables = await knex('dictionary_tables').where({ version_id: version.id });
     const sourceColumns = await knex('dictionary_columns').whereIn('table_id', sourceTables.map((t: any) => t.id));
     const sourceIndexes = await knex('dictionary_indexes').whereIn('table_id', sourceTables.map((t: any) => t.id));
+    const sourceProcedures = await knex('dictionary_procedures').where({ version_id: version.id });
 
     const newVersion = await knex.transaction(async (trx) => {
       const [id] = await trx('dictionary_versions').insert({
@@ -440,6 +484,19 @@ versionsRouter.post('/:id/rollback', async (req: Request, res: Response, next: N
           index_type: idx.index_type,
           columns: idx.columns,
           is_unique: idx.is_unique,
+        });
+      }
+      for (const p of sourceProcedures) {
+        await trx('dictionary_procedures').insert({
+          version_id: id,
+          procedure_name: p.procedure_name,
+          procedure_type: p.procedure_type,
+          return_type: p.return_type,
+          parameters: p.parameters,
+          definition: p.definition,
+          procedure_comment: p.procedure_comment,
+          custom_comment: p.custom_comment,
+          last_modified: p.last_modified,
         });
       }
       return await trx('dictionary_versions').where({ id }).first();

@@ -1,5 +1,5 @@
 import oracledb from 'oracledb';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo } from './types.js';
 
 /** Default timeout (ms) for pool creation and connection test. */
 const CONNECT_TIMEOUT_MS = 15_000;
@@ -222,6 +222,102 @@ export class OracleAdapter implements DatabaseAdapter {
         indexType: info.indexType,
         columns: info.columns,
         isUnique: info.isUnique,
+      }));
+    } finally {
+      await connection.close();
+    }
+  }
+
+  async getProcedures(): Promise<ProcedureInfo[]> {
+    const pool = await this.getPool();
+    const connection = await withTimeout(
+      pool.getConnection(),
+      this.connectTimeoutMs,
+      'Oracle connection acquisition',
+    );
+    try {
+      // 1. Get the list of procedures / functions
+      const objResult = await connection.execute(
+        `SELECT OBJECT_NAME, OBJECT_TYPE, LAST_DDL_TIME
+         FROM ALL_OBJECTS
+         WHERE OWNER = :owner AND OBJECT_TYPE IN ('PROCEDURE','FUNCTION')
+         ORDER BY OBJECT_NAME`,
+        { owner: this.owner },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const objects = (objResult.rows as any[]) || [];
+
+      // 2. Fetch source for all objects at once
+      const names = objects.map(o => o.OBJECT_NAME);
+      let sourceRows: any[] = [];
+      if (names.length > 0) {
+        const placeholders = names.map(() => ':owner').join(',');
+        const bindVars: Record<string, any> = { owner: this.owner };
+        names.forEach((n, i) => { bindVars[`n${i}`] = n; });
+        // Build IN list manually since oracledb doesn't support IN with array bind well
+        const sourceResult = await connection.execute(
+          `SELECT NAME, TEXT, LINE
+           FROM ALL_SOURCE
+           WHERE OWNER = :owner AND NAME IN (${names.map((_, i) => `:n${i}`).join(',')})
+           ORDER BY NAME, LINE`,
+          bindVars,
+          { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        );
+        sourceRows = (sourceResult.rows as any[]) || [];
+      }
+
+      // Group source text by name
+      const sourceMap = new Map<string, string>();
+      for (const row of sourceRows) {
+        const prev = sourceMap.get(row.NAME) || '';
+        sourceMap.set(row.NAME, prev + (row.TEXT || ''));
+      }
+
+      // 3. Fetch arguments for all objects
+      let argRows: any[] = [];
+      if (names.length > 0) {
+        const argResult = await connection.execute(
+          `SELECT OBJECT_NAME, ARGUMENT_NAME, DATA_TYPE, IN_OUT, DEFAULT_VALUE,
+                  POSITION, SEQUENCE
+           FROM ALL_ARGUMENTS
+           WHERE OWNER = :owner AND PACKAGE_NAME IS NULL
+             AND OBJECT_NAME IN (${names.map((_, i) => `:n${i}`).join(',')})
+           ORDER BY OBJECT_NAME, SEQUENCE`,
+          names.reduce((acc: Record<string, any>, n, i) => { acc[`n${i}`] = n; return acc; }, { owner: this.owner }),
+          { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        );
+        argRows = (argResult.rows as any[]) || [];
+      }
+
+      // Group arguments by object name + track function return types
+      const argMap = new Map<string, ProcedureParamInfo[]>();
+      const returnTypeMap = new Map<string, string>();
+      for (const row of argRows) {
+        // ALL_ARGUMENTS at POSITION=0 with ARGUMENT_NAME=NULL is the function return
+        if (!row.ARGUMENT_NAME && row.POSITION === 0) {
+          returnTypeMap.set(row.OBJECT_NAME, row.DATA_TYPE || '');
+          continue;
+        }
+        if (!row.ARGUMENT_NAME) continue;
+        if (!argMap.has(row.OBJECT_NAME)) argMap.set(row.OBJECT_NAME, []);
+        argMap.get(row.OBJECT_NAME)!.push({
+          name: row.ARGUMENT_NAME,
+          type: row.DATA_TYPE || '',
+          mode: row.IN_OUT === 'IN' ? 'IN' : row.IN_OUT === 'OUT' ? 'OUT' : row.IN_OUT === 'IN/OUT' ? 'INOUT' : 'IN',
+          default: row.DEFAULT_VALUE || null,
+        });
+      }
+
+      return objects.map(obj => ({
+        procedureName: obj.OBJECT_NAME,
+        procedureType: obj.OBJECT_TYPE, // 'PROCEDURE' or 'FUNCTION'
+        returnType: returnTypeMap.get(obj.OBJECT_NAME) || '',
+        parameters: argMap.get(obj.OBJECT_NAME) || [],
+        definition: sourceMap.get(obj.OBJECT_NAME) || '',
+        procedureComment: '',
+        lastModified: obj.LAST_DDL_TIME
+          ? new Date(obj.LAST_DDL_TIME).toISOString().split('T')[0]
+          : '',
       }));
     } finally {
       await connection.close();

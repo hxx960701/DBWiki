@@ -1,5 +1,5 @@
 import mssql from 'mssql';
-import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo } from './types.js';
+import type { DatabaseAdapter, ConnectionConfig, TableInfo, ColumnInfo, IndexInfo, ProcedureInfo, ProcedureParamInfo } from './types.js';
 
 export class MSSQLAdapter implements DatabaseAdapter {
   private pool: mssql.ConnectionPool | null = null;
@@ -153,6 +153,67 @@ export class MSSQLAdapter implements DatabaseAdapter {
       indexType: info.indexType,
       columns: info.columns,
       isUnique: info.isUnique,
+    }));
+  }
+
+  async getProcedures(): Promise<ProcedureInfo[]> {
+    const pool = await this.getPool();
+    // type codes: P=procedure, FN=scalar function, IF=inline TVF, TF=table TVF, FS/FT=CLR
+    const objResult = await pool.request().query(`
+      SELECT
+        o.object_id,
+        o.name AS procedure_name,
+        o.type AS type_code,
+        o.type_desc AS type_desc,
+        o.modify_date AS modify_date,
+        m.definition AS definition,
+        CAST(ep.value AS NVARCHAR(MAX)) AS procedure_comment
+      FROM sys.objects o
+      INNER JOIN sys.sql_modules m ON m.object_id = o.object_id
+      LEFT JOIN sys.extended_properties ep
+        ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
+      WHERE o.type IN ('P','FN','IF','TF','FS','FT')
+      ORDER BY o.name
+    `);
+    const objects = objResult.recordset as any[];
+    if (objects.length === 0) return [];
+
+    // Pull all parameters for procedures + functions
+    const paramResult = await pool.request().query(`
+      SELECT
+        p.object_id,
+        p.name AS param_name,
+        TYPE_NAME(p.user_type_id) AS data_type,
+        p.is_output,
+        p.parameter_id
+      FROM sys.parameters p
+      ORDER BY p.object_id, p.parameter_id
+    `);
+    const paramMap = new Map<number, ProcedureParamInfo[]>();
+    const returnTypeMap = new Map<number, string>();
+    for (const row of paramResult.recordset as any[]) {
+      // parameter_id = 0 is the function return value
+      if (row.parameter_id === 0) {
+        returnTypeMap.set(row.object_id, row.data_type || '');
+        continue;
+      }
+      if (!paramMap.has(row.object_id)) paramMap.set(row.object_id, []);
+      paramMap.get(row.object_id)!.push({
+        name: row.param_name,
+        type: row.data_type || '',
+        mode: row.is_output ? 'OUT' : 'IN',
+        default: null,
+      });
+    }
+
+    return objects.map((o: any) => ({
+      procedureName: o.procedure_name,
+      procedureType: o.type_code.trim() === 'P' ? 'PROCEDURE' : 'FUNCTION',
+      returnType: returnTypeMap.get(o.object_id) || '',
+      parameters: paramMap.get(o.object_id) || [],
+      definition: o.definition || '',
+      procedureComment: o.procedure_comment || '',
+      lastModified: o.modify_date ? new Date(o.modify_date).toISOString().split('T')[0] : '',
     }));
   }
 

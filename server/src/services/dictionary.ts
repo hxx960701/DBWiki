@@ -8,9 +8,9 @@ import type { ConnectionConfig } from '../adapters/types.js';
  * a "preview the diff before applying" flow:
  *
  *   1. introspectAndDiff(connectionId) — connect to the live database, fetch
- *      tables/columns/indexes, compare against the latest stored version
- *      (draft or published), and return a structured diff plus the full new
- *      snapshot. Does NOT write anything.
+ *      tables/columns/indexes/procedures, compare against the latest stored
+ *      version (draft or published), and return a structured diff plus the
+ *      full new snapshot. Does NOT write anything.
  *
  *   2. applySyncSnapshot(connectionId, snapshot, userId, overrides) — given
  *      a snapshot from step 1, persist it as a new draft version. User
@@ -49,6 +49,16 @@ export interface TableSnapshot {
   indexes: IndexSnapshot[];
 }
 
+export interface ProcedureSnapshot {
+  procedure_name: string;
+  procedure_type: string;       // 'PROCEDURE' | 'FUNCTION'
+  return_type: string;
+  parameters: Array<{ name: string; type: string; mode: string; default: string | null }>;
+  definition: string;
+  procedure_comment: string;
+  last_modified: string;
+}
+
 export interface ColumnDiff {
   column_name: string;
   type_changed?: { old: string; new: string };
@@ -66,13 +76,25 @@ export interface TableDiff {
   columns_changed: ColumnDiff[];
 }
 
+export interface ProcedureDiff {
+  procedure_name: string;
+  type_changed?: { old: string; new: string };
+  return_type_changed?: { old: string; new: string };
+  parameters_changed?: { old: string; new: string };
+  definition_changed?: { old: string; new: string };
+  comment_changed?: { old: string; new: string };
+}
+
 export interface IntrospectionResult {
   latest_version: { id: number; version_number: number; status: string } | null;
   tables_added: TableSnapshot[];
   tables_removed: string[];
   tables_changed: TableDiff[];
+  procedures_added: ProcedureSnapshot[];
+  procedures_removed: string[];
+  procedures_changed: ProcedureDiff[];
   // Full snapshot of the live database. Pass back to /sync/apply unchanged.
-  snapshot: { tables: TableSnapshot[] };
+  snapshot: { tables: TableSnapshot[]; procedures: ProcedureSnapshot[] };
 }
 
 async function loadAdapter(connectionId: number) {
@@ -91,7 +113,9 @@ async function loadAdapter(connectionId: number) {
   return { connection, adapter };
 }
 
-async function fetchLiveSnapshot(adapter: ReturnType<typeof createAdapter>): Promise<TableSnapshot[]> {
+async function fetchLiveTables(
+  adapter: ReturnType<typeof createAdapter>,
+): Promise<TableSnapshot[]> {
   const tables = await adapter.getTables();
 
   // Fetch columns + indexes for every table in parallel.
@@ -146,7 +170,41 @@ async function fetchLiveSnapshot(adapter: ReturnType<typeof createAdapter>): Pro
   return results.filter((r): r is TableSnapshot => r !== null);
 }
 
-async function loadStoredSnapshot(versionId: number): Promise<TableSnapshot[]> {
+async function fetchLiveProcedures(
+  adapter: ReturnType<typeof createAdapter>,
+): Promise<ProcedureSnapshot[]> {
+  try {
+    const procs = await adapter.getProcedures();
+    return procs.map((p) => ({
+      procedure_name: p.procedureName,
+      procedure_type: p.procedureType,
+      return_type: p.returnType,
+      parameters: p.parameters,
+      definition: p.definition,
+      procedure_comment: p.procedureComment,
+      last_modified: p.lastModified,
+    }));
+  } catch (err: any) {
+    console.warn(`[sync] Failed to fetch procedures: ${err.message}`);
+    return [];
+  }
+}
+
+async function fetchLiveSnapshot(
+  adapter: ReturnType<typeof createAdapter>,
+): Promise<{ tables: TableSnapshot[]; procedures: ProcedureSnapshot[] }> {
+  const [tables, procedures] = await Promise.all([
+    fetchLiveTables(adapter),
+    fetchLiveProcedures(adapter),
+  ]);
+  return { tables, procedures };
+}
+
+// ---------------------------------------------------------------------------
+// Stored snapshot loading
+// ---------------------------------------------------------------------------
+
+async function loadStoredTables(versionId: number): Promise<TableSnapshot[]> {
   const tables = await knex('dictionary_tables').where({ version_id: versionId });
   const out: TableSnapshot[] = [];
   for (const t of tables) {
@@ -178,7 +236,34 @@ async function loadStoredSnapshot(versionId: number): Promise<TableSnapshot[]> {
   return out;
 }
 
-function diffSnapshots(prev: TableSnapshot[], next: TableSnapshot[]) {
+async function loadStoredProcedures(versionId: number): Promise<ProcedureSnapshot[]> {
+  const rows = await knex('dictionary_procedures').where({ version_id: versionId });
+  return rows.map((r: any) => ({
+    procedure_name: r.procedure_name,
+    procedure_type: r.procedure_type || 'PROCEDURE',
+    return_type: r.return_type || '',
+    parameters: JSON.parse(r.parameters || '[]'),
+    definition: r.definition || '',
+    procedure_comment: r.procedure_comment || '',
+    last_modified: r.last_modified || '',
+  }));
+}
+
+async function loadStoredSnapshot(
+  versionId: number,
+): Promise<{ tables: TableSnapshot[]; procedures: ProcedureSnapshot[] }> {
+  const [tables, procedures] = await Promise.all([
+    loadStoredTables(versionId),
+    loadStoredProcedures(versionId),
+  ]);
+  return { tables, procedures };
+}
+
+// ---------------------------------------------------------------------------
+// Diff
+// ---------------------------------------------------------------------------
+
+function diffTables(prev: TableSnapshot[], next: TableSnapshot[]) {
   const prevMap = new Map(prev.map((t) => [t.table_name, t]));
   const nextMap = new Map(next.map((t) => [t.table_name, t]));
 
@@ -234,33 +319,83 @@ function diffSnapshots(prev: TableSnapshot[], next: TableSnapshot[]) {
   return { tables_added, tables_removed, tables_changed };
 }
 
+function diffProcedures(prev: ProcedureSnapshot[], next: ProcedureSnapshot[]) {
+  const prevMap = new Map(prev.map((p) => [p.procedure_name, p]));
+  const nextMap = new Map(next.map((p) => [p.procedure_name, p]));
+
+  const procedures_added: ProcedureSnapshot[] = [];
+  const procedures_removed: string[] = [];
+  const procedures_changed: ProcedureDiff[] = [];
+
+  for (const [name, p] of nextMap) {
+    if (!prevMap.has(name)) procedures_added.push(p);
+  }
+  for (const name of prevMap.keys()) {
+    if (!nextMap.has(name)) procedures_removed.push(name);
+  }
+  for (const [name, pP] of prevMap) {
+    const nP = nextMap.get(name);
+    if (!nP) continue;
+    const diff: ProcedureDiff = { procedure_name: name };
+    if (pP.procedure_type !== nP.procedure_type) {
+      diff.type_changed = { old: pP.procedure_type, new: nP.procedure_type };
+    }
+    if (pP.return_type !== nP.return_type) {
+      diff.return_type_changed = { old: pP.return_type, new: nP.return_type };
+    }
+    const pParams = JSON.stringify(pP.parameters);
+    const nParams = JSON.stringify(nP.parameters);
+    if (pParams !== nParams) {
+      diff.parameters_changed = { old: pParams, new: nParams };
+    }
+    if (pP.definition !== nP.definition) {
+      diff.definition_changed = { old: pP.definition, new: nP.definition };
+    }
+    if (pP.procedure_comment !== nP.procedure_comment) {
+      diff.comment_changed = { old: pP.procedure_comment, new: nP.procedure_comment };
+    }
+    if (Object.keys(diff).length > 1) procedures_changed.push(diff);
+  }
+
+  return { procedures_added, procedures_removed, procedures_changed };
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points
+// ---------------------------------------------------------------------------
+
 export async function introspectAndDiff(connectionId: number): Promise<IntrospectionResult> {
   const { adapter } = await loadAdapter(connectionId);
   try {
     const ok = await adapter.testConnection();
     if (!ok) throw new Error('Cannot connect to database');
 
-    const liveTables = await fetchLiveSnapshot(adapter);
+    const live = await fetchLiveSnapshot(adapter);
 
     const latestVersion = await knex('dictionary_versions')
       .where({ connection_id: connectionId })
       .orderBy('version_number', 'desc')
       .first();
 
-    let prevTables: TableSnapshot[] = [];
+    let prev: { tables: TableSnapshot[]; procedures: ProcedureSnapshot[] } = { tables: [], procedures: [] };
     if (latestVersion) {
-      prevTables = await loadStoredSnapshot(latestVersion.id);
+      prev = await loadStoredSnapshot(latestVersion.id);
     }
 
-    const diff = diffSnapshots(prevTables, liveTables);
+    const tableDiff = diffTables(prev.tables, live.tables);
+    const procDiff = diffProcedures(prev.procedures, live.procedures);
+
     return {
       latest_version: latestVersion
         ? { id: latestVersion.id, version_number: latestVersion.version_number, status: latestVersion.status }
         : null,
-      tables_added: diff.tables_added,
-      tables_removed: diff.tables_removed,
-      tables_changed: diff.tables_changed,
-      snapshot: { tables: liveTables },
+      tables_added: tableDiff.tables_added,
+      tables_removed: tableDiff.tables_removed,
+      tables_changed: tableDiff.tables_changed,
+      procedures_added: procDiff.procedures_added,
+      procedures_removed: procDiff.procedures_removed,
+      procedures_changed: procDiff.procedures_changed,
+      snapshot: { tables: live.tables, procedures: live.procedures },
     };
   } finally {
     await adapter.disconnect();
@@ -270,12 +405,16 @@ export async function introspectAndDiff(connectionId: number): Promise<Introspec
 /**
  * Apply a snapshot (either freshly introspected or supplied by the caller)
  * as a new draft version. Custom edits from the previous version are preserved
- * by table_name + column_name. `overrides[table.column]` lets the caller seed
- * custom_comment / display_name / tags on freshly-added columns.
+ * by table_name + column_name. `overrides` lets the caller seed
+ * custom_comment / display_name / tags on freshly-added columns or procedures.
+ *
+ * Override key conventions:
+ *   - `${table}.${column}` — columns
+ *   - `procedure:${name}` — procedures
  */
 export async function applySyncSnapshot(
   connectionId: number,
-  snapshot: { tables: TableSnapshot[] },
+  snapshot: { tables: TableSnapshot[]; procedures?: ProcedureSnapshot[] },
   userId: number,
   overrides: Record<string, { custom_comment?: string; display_name?: string; tags?: string[] }> = {},
 ) {
@@ -290,6 +429,9 @@ export async function applySyncSnapshot(
     tableComment: string;
     columns: Map<string, { customComment: string; displayName: string; tags: string }>;
   }>();
+  // Previous procedure custom_comment keyed by procedure_name.
+  const prevProcEdits = new Map<string, string>();
+
   if (latestVersion) {
     const prevTables = await knex('dictionary_tables').where({ version_id: latestVersion.id });
     for (const pt of prevTables) {
@@ -303,6 +445,11 @@ export async function applySyncSnapshot(
         });
       }
       prevEdits.set(pt.table_name, { tableComment: pt.custom_comment || '', columns: colMap });
+    }
+
+    const prevProcs = await knex('dictionary_procedures').where({ version_id: latestVersion.id });
+    for (const pp of prevProcs) {
+      prevProcEdits.set(pp.procedure_name, pp.custom_comment || '');
     }
   }
 
@@ -322,6 +469,7 @@ export async function applySyncSnapshot(
       }),
     });
 
+    // --- Tables + columns + indexes ---
     for (const t of snapshot.tables) {
       const prevEdit = prevEdits.get(t.table_name);
       const [tableId] = await trx('dictionary_tables').insert({
@@ -364,6 +512,24 @@ export async function applySyncSnapshot(
       }
     }
 
+    // --- Procedures ---
+    const procedures = snapshot.procedures || [];
+    for (const p of procedures) {
+      const override = overrides[`procedure:${p.procedure_name}`];
+      const prevCustom = prevProcEdits.get(p.procedure_name);
+      await trx('dictionary_procedures').insert({
+        version_id: versionId,
+        procedure_name: p.procedure_name,
+        procedure_type: p.procedure_type,
+        return_type: p.return_type,
+        parameters: JSON.stringify(p.parameters),
+        definition: p.definition,
+        procedure_comment: p.procedure_comment,
+        custom_comment: override?.custom_comment ?? prevCustom ?? '',
+        last_modified: p.last_modified,
+      });
+    }
+
     return await trx('dictionary_versions').where({ id: versionId }).first();
   });
 }
@@ -402,7 +568,7 @@ export async function getDictionaryByConnection(connectionId: number, versionPar
     }
   }
 
-  if (!version) return { version: null, tables: [] };
+  if (!version) return { version: null, tables: [], procedures: [] };
 
   const tables = await knex('dictionary_tables').where({ version_id: version.id });
   const tablesWithDetails = await Promise.all(
@@ -419,5 +585,16 @@ export async function getDictionaryByConnection(connectionId: number, versionPar
     }),
   );
 
-  return { version, tables: tablesWithDetails };
+  const procedures = await knex('dictionary_procedures')
+    .where({ version_id: version.id })
+    .orderBy('procedure_name', 'asc');
+
+  return {
+    version,
+    tables: tablesWithDetails,
+    procedures: procedures.map((p: any) => ({
+      ...p,
+      parameters: JSON.parse(p.parameters || '[]'),
+    })),
+  };
 }
