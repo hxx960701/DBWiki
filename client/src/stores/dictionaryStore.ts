@@ -141,8 +141,9 @@ export const useDictionaryStore = create<DictionaryState>((set, get) => ({
     try {
       const diff = await connectionsApi.previewSync(connectionId);
       set({ syncDiff: diff, syncDiffLoading: false });
-    } catch {
+    } catch (e) {
       set({ syncDiffLoading: false });
+      throw e;
     }
   },
 

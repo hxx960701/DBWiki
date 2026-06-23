@@ -49,6 +49,7 @@ const DictionaryBrowser: React.FC = () => {
   const [procTypeFilter, setProcTypeFilter] = useState<string>('all');
   const [selectedVersion, setSelectedVersion] = useState<string>('latest');
   const [syncDrawerOpen, setSyncDrawerOpen] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishForm] = Form.useForm();
   const [exporting, setExporting] = useState(false);
@@ -60,6 +61,9 @@ const DictionaryBrowser: React.FC = () => {
   const [draftDrawerOpen, setDraftDrawerOpen] = useState(false);
   const [drafts, setDrafts] = useState<any[]>([]);
   const [draftsLoading, setDraftsLoading] = useState(false);
+  const [draftPublishOpen, setDraftPublishOpen] = useState(false);
+  const [draftPublishTarget, setDraftPublishTarget] = useState<any>(null);
+  const [draftPublishForm] = Form.useForm();
 
   const canEdit = hasPermission('dictionary:edit');
   const canSave = hasPermission('dictionary:save');
@@ -192,8 +196,15 @@ const DictionaryBrowser: React.FC = () => {
   };
 
   const handleSync = async () => {
-    await previewSync(connectionId);
+    setSyncLoading(true);
     setSyncDrawerOpen(true);
+    try {
+      await previewSync(connectionId);
+    } catch (err: any) {
+      message.error('同步预览失败: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setSyncLoading(false);
+    }
   };
 
   const handleApplySync = async () => {
@@ -311,9 +322,18 @@ const DictionaryBrowser: React.FC = () => {
     });
   };
 
-  const handlePublishDraft = async (draft: any) => {
+  const handlePublishDraft = (draft: any) => {
+    setDraftPublishTarget(draft);
+    draftPublishForm.resetFields();
+    setDraftPublishOpen(true);
+  };
+
+  const confirmPublishDraft = async () => {
+    const draft = draftPublishTarget;
+    if (!draft) return;
     try {
-      const result = await dictionaryApi.publishVersionWithForce(draft.id, '', false);
+      const { notes } = await draftPublishForm.validateFields();
+      const result = await dictionaryApi.publishVersionWithForce(draft.id, notes, false);
       if (result.stale) {
         Modal.confirm({
           title: '草稿可能不是最新结构',
@@ -322,8 +342,11 @@ const DictionaryBrowser: React.FC = () => {
           cancelText: '取消',
           onOk: async () => {
             try {
-              await dictionaryApi.publishVersionWithForce(draft.id, '', true);
+              await dictionaryApi.publishVersionWithForce(draft.id, notes, true);
               message.success('已发布');
+              setDraftPublishOpen(false);
+              setDraftPublishTarget(null);
+              draftPublishForm.resetFields();
               loadDrafts();
               if (connectionId === draft.connection_id) {
                 fetchDictionary(connectionId, 'latest');
@@ -336,6 +359,9 @@ const DictionaryBrowser: React.FC = () => {
         });
       } else {
         message.success('已发布');
+        setDraftPublishOpen(false);
+        setDraftPublishTarget(null);
+        draftPublishForm.resetFields();
         loadDrafts();
         if (connectionId === draft.connection_id) {
           fetchDictionary(connectionId, 'latest');
@@ -343,6 +369,7 @@ const DictionaryBrowser: React.FC = () => {
         }
       }
     } catch (err: any) {
+      if (err?.errorFields) return;
       message.error(err.response?.data?.error || '发布失败');
     }
   };
@@ -860,7 +887,7 @@ const DictionaryBrowser: React.FC = () => {
               草稿箱
             </Button>
             {canSync && (
-              <Button icon={<SyncOutlined />} loading={syncing} onClick={handleSync} type="default">
+              <Button icon={<SyncOutlined />} loading={syncLoading || syncing} onClick={handleSync} type="default">
                 同步
               </Button>
             )}
@@ -1101,6 +1128,27 @@ const DictionaryBrowser: React.FC = () => {
         width={520}
       >
         <Form form={publishForm} layout="vertical">
+          <Form.Item
+            name="notes"
+            label="发布备注"
+            rules={[{ required: true, message: '请填写发布说明' }]}
+          >
+            <TextArea rows={4} placeholder="本次发布的主要变更/说明" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Draft publish modal */}
+      <Modal
+        title={`发布草稿 v${draftPublishTarget?.version_number || ''}`}
+        open={draftPublishOpen}
+        onCancel={() => { setDraftPublishOpen(false); setDraftPublishTarget(null); draftPublishForm.resetFields(); }}
+        onOk={confirmPublishDraft}
+        okText="确认发布"
+        cancelText="取消"
+        width={520}
+      >
+        <Form form={draftPublishForm} layout="vertical">
           <Form.Item
             name="notes"
             label="发布备注"
