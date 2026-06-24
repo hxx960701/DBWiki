@@ -7,11 +7,12 @@ import {
 } from 'antd';
 import {
   SyncOutlined, ArrowLeftOutlined, SaveOutlined, CloudUploadOutlined,
-  TableOutlined, HistoryOutlined, FunctionOutlined,
+  TableOutlined, HistoryOutlined, FunctionOutlined, LinkOutlined,
 } from '@ant-design/icons';
 import { useDictionaryStore } from '../../stores/dictionaryStore';
 import { dictionaryApi } from '../../api/dictionary';
 import { connectionsApi } from '../../api/connections';
+import { relationsApi, type Relation } from '../../api/relations';
 import { useAuthStore } from '../../stores/authStore';
 import type { DictionaryColumn, DictionaryProcedure } from '../../types';
 
@@ -64,6 +65,8 @@ const DictionaryBrowser: React.FC = () => {
   const [draftPublishOpen, setDraftPublishOpen] = useState(false);
   const [draftPublishTarget, setDraftPublishTarget] = useState<any>(null);
   const [draftPublishForm] = Form.useForm();
+  const [tableRelations, setTableRelations] = useState<Relation[]>([]);
+  const [relationsLoading, setRelationsLoading] = useState(false);
 
   const canEdit = hasPermission('dictionary:edit');
   const canSave = hasPermission('dictionary:save');
@@ -194,6 +197,45 @@ const DictionaryBrowser: React.FC = () => {
     setSelectedVersion(val);
     fetchDictionary(connectionId, val);
   };
+
+  // Load relations for selected table
+  useEffect(() => {
+    if (!selectedTable) {
+      setTableRelations([]);
+      return;
+    }
+
+    const loadRelations = async () => {
+      setRelationsLoading(true);
+      try {
+        // Get all dimensions for this connection
+        const dims = await relationsApi.listDimensions(connectionId);
+        if (dims.length === 0) {
+          setTableRelations([]);
+          return;
+        }
+
+        // Load relations from all dimensions and filter for current table
+        const allRelations: Relation[] = [];
+        for (const dim of dims) {
+          const rels = await relationsApi.listRelations(dim.id);
+          allRelations.push(...rels);
+        }
+
+        // Filter relations that involve the selected table
+        const filtered = allRelations.filter(
+          (r) => r.source_table_name === selectedTable.table_name || r.target_table_name === selectedTable.table_name
+        );
+        setTableRelations(filtered);
+      } catch (err: any) {
+        console.error('Failed to load relations:', err);
+      } finally {
+        setRelationsLoading(false);
+      }
+    };
+
+    loadRelations();
+  }, [selectedTable, connectionId]);
 
   const handleSync = async () => {
     setSyncLoading(true);
@@ -502,6 +544,32 @@ const DictionaryBrowser: React.FC = () => {
         />
       ),
     },
+    {
+      title: '关联', key: 'relations', width: 150,
+      render: (_: any, record: DictionaryColumn) => {
+        if (!selectedTable) return '-';
+        const relations = tableRelations.filter(
+          (r) =>
+            (r.source_table_name === selectedTable.table_name && r.source_column_name === record.column_name) ||
+            (r.target_table_name === selectedTable.table_name && r.target_column_name === record.column_name)
+        );
+        if (relations.length === 0) return '-';
+        return (
+          <Space direction="vertical" size={2}>
+            {relations.map((r) => {
+              const isSource = r.source_table_name === selectedTable.table_name;
+              const targetTable = isSource ? r.target_table_name : r.source_table_name;
+              const targetColumn = isSource ? r.target_column_name : r.source_column_name;
+              return (
+                <Tag key={r.id} color="blue" style={{ fontSize: 11 }}>
+                  {isSource ? '→' : '←'} {targetTable}.{targetColumn}
+                </Tag>
+              );
+            })}
+          </Space>
+        );
+      },
+    },
   ];
 
   const indexColumns = [
@@ -599,6 +667,71 @@ const DictionaryBrowser: React.FC = () => {
             )
           )}
         </>
+      ),
+    },
+    {
+      key: 'relations',
+      label: (
+        <span>
+          <LinkOutlined /> 关联 ({tableRelations.length})
+        </span>
+      ),
+      children: relationsLoading ? (
+        <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+      ) : tableRelations.length === 0 ? (
+        <Empty description="暂无关联关系，可在「表关联管理」画布中创建" />
+      ) : (
+        <Table
+          dataSource={tableRelations}
+          rowKey="id"
+          size="small"
+          pagination={false}
+          columns={[
+            {
+              title: '方向',
+              key: 'direction',
+              width: 60,
+              render: (_: any, r: Relation) => {
+                const isSource = r.source_table_name === selectedTable.table_name;
+                return <Tag color={isSource ? 'blue' : 'green'}>{isSource ? '出' : '入'}</Tag>;
+              },
+            },
+            {
+              title: '类型',
+              dataIndex: 'relation_type',
+              key: 'type',
+              width: 80,
+              render: (v: string) => <Tag>{v}</Tag>,
+            },
+            {
+              title: '本表字段',
+              key: 'localColumn',
+              width: 150,
+              render: (_: any, r: Relation) => {
+                const isSource = r.source_table_name === selectedTable.table_name;
+                return <Text code>{isSource ? r.source_column_name : r.target_column_name}</Text>;
+              },
+            },
+            {
+              title: '关联表',
+              key: 'remoteTable',
+              width: 150,
+              render: (_: any, r: Relation) => {
+                const isSource = r.source_table_name === selectedTable.table_name;
+                return <Text strong>{isSource ? r.target_table_name : r.source_table_name}</Text>;
+              },
+            },
+            {
+              title: '关联字段',
+              key: 'remoteColumn',
+              width: 150,
+              render: (_: any, r: Relation) => {
+                const isSource = r.source_table_name === selectedTable.table_name;
+                return <Text code>{isSource ? r.target_column_name : r.source_column_name}</Text>;
+              },
+            },
+          ]}
+        />
       ),
     },
   ] : [];
@@ -882,6 +1015,12 @@ const DictionaryBrowser: React.FC = () => {
               onClick={() => guardedNavigate(`/connections/${connectionId}/versions`)}
             >
               版本历史
+            </Button>
+            <Button
+              icon={<LinkOutlined />}
+              onClick={() => guardedNavigate(`/connections/${connectionId}/relations`)}
+            >
+              表关联
             </Button>
             <Button onClick={openDraftBox}>
               草稿箱

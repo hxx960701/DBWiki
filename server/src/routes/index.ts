@@ -8,6 +8,7 @@ import { adminRouter } from './admin.js';
 import { systemRouter } from './system.js';
 import { rolesRouter, permissionsRouter } from './roles.js';
 import { auditRouter } from './audit.js';
+import { relationsRouter } from './relations.js';
 
 export const apiRouter = Router();
 
@@ -21,3 +22,4 @@ apiRouter.use('/admin/system', systemRouter);
 apiRouter.use('/admin/audit', auditRouter);
 apiRouter.use('/roles', rolesRouter);
 apiRouter.use('/permissions', permissionsRouter);
+apiRouter.use('/relations', relationsRouter);
