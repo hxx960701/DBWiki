@@ -8,6 +8,7 @@ import { decrypt } from '../services/encryption.js';
 import { createAdapter } from '../adapters/factory.js';
 import { introspectAndDiff, applySyncSnapshot, syncConnection } from '../services/dictionary.js';
 import { getGlobalPermissions, getProjectPermissions } from '../services/permissions.js';
+import { recordAuditAsync } from '../services/audit-log.js';
 import type { DatabaseConnection } from '../types/index.js';
 
 export const connectionActionsRouter = Router();
@@ -184,7 +185,20 @@ connectionActionsRouter.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const connection = await loadAuthorizedConnection(req, 'connection:sync');
+      const startedAt = Date.now();
       const version = await syncConnection(connection.id, req.user!.userId);
+      recordAuditAsync({
+        category: 'sync',
+        action: 'sync.full',
+        req,
+        result: 'success',
+        target: { type: 'connection', id: connection.id, label: connection.name },
+        metadata: {
+          duration_ms: Date.now() - startedAt,
+          version_id: version?.id,
+          version_number: version?.version_number,
+        },
+      });
       res.json(version);
     } catch (error) {
       next(error);
@@ -199,7 +213,24 @@ connectionActionsRouter.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const connection = await loadAuthorizedConnection(req, 'connection:sync');
+      const startedAt = Date.now();
       const result = await introspectAndDiff(connection.id);
+      recordAuditAsync({
+        category: 'sync',
+        action: 'sync.preview',
+        req,
+        result: 'success',
+        target: { type: 'connection', id: connection.id, label: connection.name },
+        metadata: {
+          duration_ms: Date.now() - startedAt,
+          tables_added: result.tables_added?.length || 0,
+          tables_removed: result.tables_removed?.length || 0,
+          tables_changed: result.tables_changed?.length || 0,
+          procedures_added: result.procedures_added?.length || 0,
+          procedures_removed: result.procedures_removed?.length || 0,
+          procedures_changed: result.procedures_changed?.length || 0,
+        },
+      });
       res.json(result);
     } catch (error) {
       next(error);
@@ -227,7 +258,21 @@ connectionActionsRouter.post(
     try {
       const connection = await loadAuthorizedConnection(req, 'connection:sync');
       const { snapshot, overrides } = req.body;
+      const startedAt = Date.now();
       const version = await applySyncSnapshot(connection.id, snapshot, req.user!.userId, overrides || {});
+      recordAuditAsync({
+        category: 'sync',
+        action: 'sync.apply',
+        req,
+        result: 'success',
+        target: { type: 'connection', id: connection.id, label: connection.name },
+        metadata: {
+          duration_ms: Date.now() - startedAt,
+          version_id: (version as any)?.id,
+          version_number: (version as any)?.version_number,
+          override_count: Object.keys(overrides || {}).length,
+        },
+      });
       res.json(version);
     } catch (error) {
       next(error);

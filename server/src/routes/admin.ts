@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import { validate } from '../middleware/validate.js';
 import { AppError } from '../middleware/error-handler.js';
+import { recordAuditAsync } from '../services/audit-log.js';
 
 export const adminRouter = Router();
 
@@ -238,6 +239,14 @@ adminRouter.post(
         .select('id', 'username', 'display_name', 'email', 'role', 'created_at', 'updated_at')
         .where({ id: userId })
         .first();
+      recordAuditAsync({
+        category: 'user_mgmt',
+        action: 'user.create',
+        req,
+        result: 'success',
+        target: { type: 'user', id: userId, label: display_name || username },
+        metadata: { role, role_ids, role_names },
+      });
       res.status(201).json(created);
     } catch (error) {
       next(error);
@@ -273,6 +282,15 @@ adminRouter.put(
         .where({ id: userId })
         .first();
 
+      recordAuditAsync({
+        category: 'user_mgmt',
+        action: 'user.update_role',
+        req,
+        result: 'success',
+        target: { type: 'user', id: userId, label: user.display_name || user.username },
+        metadata: { from: user.role, to: role },
+      });
+
       res.json(updated);
     } catch (error) {
       next(error);
@@ -305,6 +323,14 @@ adminRouter.put(
         .join('roles as r', 'r.id', 'ur.role_id')
         .where('ur.user_id', userId)
         .select('r.id as role_id', 'r.name as role_name');
+      recordAuditAsync({
+        category: 'user_mgmt',
+        action: 'user.set_roles',
+        req,
+        result: 'success',
+        target: { type: 'user', id: userId, label: user.display_name || user.username },
+        metadata: { roles: refreshed.map((r: any) => r.role_name) },
+      });
       res.json({ user_id: userId, roles: refreshed });
     } catch (error) {
       next(error);
@@ -335,6 +361,14 @@ adminRouter.put(
         .select('id', 'username', 'display_name', 'email', 'role', 'created_at', 'updated_at')
         .where({ id: userId })
         .first();
+      recordAuditAsync({
+        category: 'user_mgmt',
+        action: 'user.update_display_name',
+        req,
+        result: 'success',
+        target: { type: 'user', id: userId, label: display_name },
+        metadata: { from: user.display_name, to: display_name },
+      });
       res.json(updated);
     } catch (error) {
       next(error);
@@ -360,6 +394,13 @@ adminRouter.delete(
       }
 
       await knex('users').where({ id: userId }).delete();
+      recordAuditAsync({
+        category: 'user_mgmt',
+        action: 'user.delete',
+        req,
+        result: 'success',
+        target: { type: 'user', id: userId, label: user.display_name || user.username },
+      });
       res.status(204).send();
     } catch (error) {
       next(error);
@@ -387,6 +428,14 @@ adminRouter.put(
       await knex('users')
         .where({ id: userId })
         .update({ password_hash, updated_at: knex.fn.now() });
+
+      recordAuditAsync({
+        category: 'user_mgmt',
+        action: 'user.reset_password',
+        req,
+        result: 'success',
+        target: { type: 'user', id: userId, label: user.display_name || user.username },
+      });
 
       res.json({ message: 'Password reset successfully' });
     } catch (error) {

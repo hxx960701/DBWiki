@@ -3,6 +3,7 @@ import knex from '../database/connection.js';
 import { authenticate } from '../middleware/auth.js';
 import { AppError } from '../middleware/error-handler.js';
 import { getProjectPermissions } from '../services/permissions.js';
+import { recordAuditAsync } from '../services/audit-log.js';
 import type { DictionaryVersion } from '../types/index.js';
 
 export const versionsRouter = Router();
@@ -415,6 +416,18 @@ versionsRouter.post('/:id/publish', async (req: Request, res: Response, next: Ne
     });
 
     const updated = await knex('dictionary_versions').where({ id: versionId }).first();
+    recordAuditAsync({
+      category: 'dictionary',
+      action: 'dictionary.publish',
+      req,
+      result: 'success',
+      target: {
+        type: 'version',
+        id: versionId,
+        label: `v${publishVersionNumber}`,
+      },
+      metadata: { connection_id: version.connection_id, notes, version_number: publishVersionNumber },
+    });
     res.json(updated);
   } catch (error) {
     next(error);
@@ -466,6 +479,15 @@ versionsRouter.delete('/:id', async (req: Request, res: Response, next: NextFunc
       await trx('dictionary_tables').where({ version_id: versionId }).del();
       await trx('dictionary_publish_logs').where({ version_id: versionId }).del();
       await trx('dictionary_versions').where({ id: versionId }).del();
+    });
+
+    recordAuditAsync({
+      category: 'dictionary',
+      action: 'dictionary.delete_version',
+      req,
+      result: 'success',
+      target: { type: 'version', id: versionId, label: `v${version.version_number}` },
+      metadata: { connection_id: version.connection_id, status: version.status },
     });
 
     res.json({ success: true, deleted_version_id: versionId });
@@ -562,6 +584,23 @@ versionsRouter.post('/:id/rollback', async (req: Request, res: Response, next: N
         });
       }
       return await trx('dictionary_versions').where({ id }).first();
+    });
+
+    recordAuditAsync({
+      category: 'dictionary',
+      action: 'dictionary.rollback',
+      req,
+      result: 'success',
+      target: {
+        type: 'version',
+        id: (newVersion as any)?.id,
+        label: `v${nextVersionNumber} (from v${version.version_number})`,
+      },
+      metadata: {
+        connection_id: version.connection_id,
+        source_version_id: version.id,
+        source_version_number: version.version_number,
+      },
     });
 
     res.status(201).json(newVersion);

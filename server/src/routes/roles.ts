@@ -5,6 +5,7 @@ import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import { validate } from '../middleware/validate.js';
 import { AppError } from '../middleware/error-handler.js';
+import { recordAuditAsync } from '../services/audit-log.js';
 
 export const rolesRouter = Router();
 
@@ -78,6 +79,14 @@ rolesRouter.post(
         await knex('role_permissions').insert(validCodes.map((c: string) => ({ role_id: id, permission_code: c })));
       }
       const role = await knex('roles').where({ id }).first();
+      recordAuditAsync({
+        category: 'role_mgmt',
+        action: 'role.create',
+        req,
+        result: 'success',
+        target: { type: 'role', id, label: name },
+        metadata: { permission_codes: validCodes },
+      });
       res.status(201).json({ ...role, permission_codes: validCodes });
     } catch (error) {
       next(error);
@@ -118,6 +127,14 @@ rolesRouter.put(
 
       const refreshed = await knex('roles').where({ id }).first();
       const codes = await knex('role_permissions').where({ role_id: id }).pluck('permission_code');
+      recordAuditAsync({
+        category: 'role_mgmt',
+        action: 'role.update',
+        req,
+        result: 'success',
+        target: { type: 'role', id, label: refreshed.name },
+        metadata: { updates, permission_codes: permission_codes !== undefined ? codes : undefined },
+      });
       res.json({ ...refreshed, permission_codes: codes });
     } catch (error) {
       next(error);
@@ -136,6 +153,13 @@ rolesRouter.delete(
       if (!role) throw new AppError('Role not found', 404);
       if (role.is_system) throw new AppError('Cannot delete a system role', 400);
       await knex('roles').where({ id }).delete();
+      recordAuditAsync({
+        category: 'role_mgmt',
+        action: 'role.delete',
+        req,
+        result: 'success',
+        target: { type: 'role', id, label: role.name },
+      });
       res.status(204).send();
     } catch (error) {
       next(error);
