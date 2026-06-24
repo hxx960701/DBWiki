@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Layout, Card, Button, Space, Typography, message, Spin, Empty, Modal, Select,
+  Layout, Card, Button, Space, Typography, message, Spin, Empty, Modal, Select, Tabs,
 } from 'antd';
 import {
-  ArrowLeftOutlined, CompressOutlined, ZoomInOutlined, ZoomOutOutlined,
+  ArrowLeftOutlined, CompressOutlined, ZoomInOutlined, ZoomOutOutlined, CodeOutlined,
 } from '@ant-design/icons';
 import {
   ReactFlow,
@@ -23,6 +23,7 @@ import '@xyflow/react/dist/style.css';
 
 import { relationsApi, type Dimension, type Relation } from '../../api/relations';
 import { dictionaryApi } from '../../api/dictionary';
+import { generateRelationSQL, generateAllSQL } from '../../utils/sqlGenerator';
 import DimensionSelector from './DimensionSelector';
 import TableList from './TableList';
 import TableNode from './TableNode';
@@ -341,6 +342,25 @@ const RelationCanvasInner: React.FC = () => {
     }
   };
 
+  // SQL generation modal
+  const [sqlModalOpen, setSqlModalOpen] = useState(false);
+  const [generatedSQL, setGeneratedSQL] = useState('');
+
+  const handleGenerateSQL = () => {
+    if (relations.length === 0) {
+      message.warning('当前维度没有关联关系');
+      return;
+    }
+    const sql = generateAllSQL(relations, tables);
+    setGeneratedSQL(sql);
+    setSqlModalOpen(true);
+  };
+
+  const handleCopySQL = () => {
+    navigator.clipboard.writeText(generatedSQL);
+    message.success('SQL已复制到剪贴板');
+  };
+
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: 100 }}>
@@ -365,6 +385,9 @@ const RelationCanvasInner: React.FC = () => {
             </Text>
           </Space>
           <Space>
+            <Button size="small" icon={<CodeOutlined />} onClick={handleGenerateSQL} type="primary">
+              生成SQL
+            </Button>
             <Button size="small" icon={<ZoomInOutlined />} onClick={() => {
               // Zoom in handled by ReactFlow controls
             }}>
@@ -469,6 +492,79 @@ const RelationCanvasInner: React.FC = () => {
               />
             </div>
           </div>
+        )}
+      </Modal>
+
+      {/* SQL generation modal */}
+      <Modal
+        title="生成SQL"
+        open={sqlModalOpen}
+        onCancel={() => setSqlModalOpen(false)}
+        width={900}
+        footer={[
+          <Button key="copy" type="primary" onClick={handleCopySQL}>
+            复制全部
+          </Button>,
+          <Button key="close" onClick={() => setSqlModalOpen(false)}>
+            关闭
+          </Button>,
+        ]}
+      >
+        {generatedSQL && (
+          <Tabs
+            defaultActiveKey="all"
+            items={[
+              {
+                key: 'all',
+                label: '完整SQL',
+                children: (
+                  <pre
+                    style={{
+                      background: '#f5f5f5',
+                      padding: 16,
+                      borderRadius: 4,
+                      overflow: 'auto',
+                      maxHeight: 500,
+                      fontSize: 13,
+                      fontFamily: 'monospace',
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {generatedSQL}
+                  </pre>
+                ),
+              },
+              ...generateRelationSQL(relations, tables).map((group, idx) => ({
+                key: `group-${idx}`,
+                label: group.category,
+                children: (
+                  <div style={{ maxHeight: 500, overflow: 'auto' }}>
+                    {group.statements.map((stmt, sIdx) => (
+                      <div key={sIdx} style={{ marginBottom: 16 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {stmt.description}
+                        </Text>
+                        <pre
+                          style={{
+                            background: '#f5f5f5',
+                            padding: 12,
+                            borderRadius: 4,
+                            overflow: 'auto',
+                            fontSize: 13,
+                            fontFamily: 'monospace',
+                            lineHeight: 1.6,
+                            marginTop: 4,
+                          }}
+                        >
+                          {stmt.sql}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                ),
+              })),
+            ]}
+          />
         )}
       </Modal>
     </div>
