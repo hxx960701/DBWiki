@@ -14,6 +14,7 @@ import {
 import type { MenuProps } from 'antd';
 import { Outlet, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
+import { useHeartbeat } from '../../hooks/useHeartbeat';
 import { connectionsApi } from '../../api/connections';
 import { projectsApi } from '../../api/projects';
 
@@ -27,6 +28,9 @@ const MainLayout: React.FC = () => {
   const params = useParams();
   const { user, logout, hasPermission } = useAuthStore();
   const { token: { colorBgContainer, borderRadiusLG } } = theme.useToken();
+
+  // Drive the admin "online now" badge from real user activity in this tab.
+  useHeartbeat(Boolean(user));
 
   // Breadcrumb info loaded async for connection/project pages
   const [connectionInfo, setConnectionInfo] = useState<{ connection_name: string; project_name: string } | null>(null);

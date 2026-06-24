@@ -3,7 +3,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import knex from '../database/connection.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, touchLastSeen } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { AppError } from '../middleware/error-handler.js';
 import { getGlobalPermissions } from '../services/permissions.js';
@@ -176,3 +176,20 @@ authRouter.put(
     }
   },
 );
+
+/**
+ * POST /auth/heartbeat — client-driven liveness ping.
+ *
+ * Called by the SPA only while the user is actively interacting with a
+ * visible tab (mouse/keyboard/scroll within an idle window). Its sole side
+ * effect is updating `users.last_seen_at`, which drives the admin-only
+ * "online now" badge. Always returns 204 to keep the round-trip cheap.
+ *
+ * The write is throttled inside touchLastSeen, so a chatty client can't
+ * hammer the DB.
+ */
+authRouter.post('/heartbeat', authenticate, (req: Request, res: Response) => {
+  const uid = req.user?.userId;
+  if (uid) touchLastSeen(uid);
+  res.status(204).end();
+});

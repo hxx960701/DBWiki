@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import knex from '../database/connection.js';
+import knex, { getDatabaseType } from '../database/connection.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import { recordAuditAsync, AuditCategory } from '../services/audit-log.js';
@@ -14,19 +14,29 @@ auditRouter.use(requirePermission('user:manage'));
 const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
 
 /**
- * Parse a DB timestamp safely.
- * - mysql2 returns Date objects already.
- * - better-sqlite3 returns SQL strings like "2026-06-24 01:09:20" with NO
- *   timezone designator, but SQLite stores them as UTC. Date() in V8 parses
- *   such strings as local time, which would skew the "online" calculation by
- *   the host timezone offset. Force UTC interpretation by appending 'Z'.
+ * Parse a DB timestamp safely. Handling differs by backend:
+ *
+ *  - MySQL (mysql2 driver): TIMESTAMP/DATETIME columns come back either as a
+ *    JS Date in the server's local time or as a naïve string "YYYY-MM-DD
+ *    HH:MM:SS" with no zone. Either way the value semantically represents the
+ *    **MySQL server's local time** (NOW() returns local time). On the same
+ *    host as Node, that's our local time too — let the JS engine parse it as
+ *    local. (Forcing UTC here was the source of the +8h skew users saw.)
+ *
+ *  - SQLite (better-sqlite3): CURRENT_TIMESTAMP is documented as **UTC** and
+ *    comes back as a naïve string. V8 would otherwise parse it as local time
+ *    and skew the "online" calculation by the host offset, so we force-append
+ *    'Z' for SQLite.
  */
 function tsToMillis(v: unknown): number {
   if (!v) return 0;
   if (v instanceof Date) return v.getTime();
   const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
-    return new Date(s.replace(' ', 'T') + 'Z').getTime();
+  const isNaive = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s);
+  if (isNaive) {
+    const iso = s.replace(' ', 'T');
+    const suffix = getDatabaseType() === 'sqlite' ? 'Z' : '';
+    return new Date(iso + suffix).getTime();
   }
   const n = new Date(s).getTime();
   return Number.isNaN(n) ? 0 : n;
